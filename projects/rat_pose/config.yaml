@@ -1,0 +1,150 @@
+# Project definitions (do not edit)
+Task: Sleap_Rat_test
+scorer: T
+date: Oct2
+multianimalproject: false
+identity:
+
+
+# Project path (change when moving around)
+project_path: G:\My Drive\projects\Green 
+  Tom\rat_pose\post_model\projects\rat_pose
+
+
+# Default DeepLabCut engine to use for shuffle creation (either pytorch or tensorflow)
+engine: pytorch
+
+
+# Annotation data set configuration (and individual video cropping parameters)
+video_sets:
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Camera4_stitched.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\RAT 11 FR1.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green 
+    Tom\rat_pose\post_model\videos\Rat_Tracking_Video_Generation_Request (1).mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green 
+    Tom\rat_pose\post_model\videos\Rat_Tracking_Video_Generation_Request (2).mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green 
+    Tom\rat_pose\post_model\videos\Rat_Tracking_Video_Generation_Request (3).mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green 
+    Tom\rat_pose\post_model\videos\Rat_Tracking_Video_Generation_Request.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green 
+    Tom\rat_pose\post_model\videos\Rat_Video_Generated_Successfully.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green 
+    Tom\rat_pose\post_model\videos\Rat_Video_Generation_Request_Fulfilled.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green 
+    Tom\rat_pose\post_model\videos\Video_Generation_Rat_in_Chamber.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green 
+    Tom\rat_pose\post_model\videos\Video_for_Rat_Tracking_Training (3).mp4:
+    crop: 0, 1280, 0, 720
+bodyparts:
+- head
+- nose
+- spine1
+- spine2
+- spine3
+- tailbase
+- tail1
+- tail2
+- tail_tip
+- L_hip
+- L_backpaw
+- R_backpaw
+- L_shoulder
+- R_frontpaw
+- R_shoulder
+- R_hip
+- R_knee
+- L_knee
+- L_frontpaw
+
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
+start: 0
+stop: 1
+numframes2pick: 20
+
+
+# Plotting configuration
+skeleton:
+- - head
+  - nose
+- - head
+  - spine1
+- - spine1
+  - spine2
+- - spine2
+  - spine3
+- - spine1
+  - L_shoulder
+- - L_shoulder
+  - L_frontpaw
+- - spine3
+  - L_hip
+- - L_hip
+  - L_knee
+- - L_knee
+  - L_backpaw
+- - spine3
+  - tailbase
+- - tailbase
+  - tail1
+- - tail1
+  - tail2
+- - tail2
+  - tail_tip
+- - spine1
+  - R_shoulder
+- - R_shoulder
+  - R_frontpaw
+- - spine3
+  - R_hip
+- - R_hip
+  - R_knee
+- - R_knee
+  - R_backpaw
+skeleton_color: black
+pcutoff: 0.6
+dotsize: 12
+alphavalue: 0.7
+colormap: rainbow
+
+
+# Training,Evaluation and Analysis configuration
+TrainingFraction:
+- 0.95
+iteration: 0
+default_net_type: resnet_50
+default_augmenter: default
+snapshotindex: -1
+detector_snapshotindex: -1
+batch_size: 8
+detector_batch_size: 1
+
+
+# Cropping Parameters (for analysis and outlier frame detection)
+cropping: false
+#if cropping is true for analysis, then set the values here:
+x1: 0
+x2: 640
+y1: 277
+y2: 624
+
+
+# Refinement configuration (parameters from annotation dataset configuration also relevant in this stage)
+corner2move2:
+- 50
+- 50
+move2corner: true
+
+
+# Conversion tables to fine-tune SuperAnimal weights
+SuperAnimalConversionTables:

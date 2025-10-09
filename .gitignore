@@ -1,0 +1,9 @@
+*.mp4
+*.png
+.vscode
+*.h5
+**/training-datasets/
+**/evaluation-results-pytorch/
+output/sleap_skeleton
+__pycache__
+.DS_Store
