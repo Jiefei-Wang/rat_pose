@@ -17,7 +17,7 @@ def save_config(project_path, config):
     with open(config_path, 'w') as f:
         yaml.dump(config, f)
 
-def remove_all_cache(project_path):
+def remove_all_cache(project_path, type = ['.png', '.h5']):
     """
     Removes all image files and h5 files from the labeled-data directory.
     """
@@ -29,7 +29,7 @@ def remove_all_cache(project_path):
     for video_folder in os.listdir(labeled_data_path):
         video_folder_path = os.path.join(labeled_data_path, video_folder)
         if os.path.isdir(video_folder_path):
-            cache_files = [f for f in os.listdir(video_folder_path) if f.endswith('.png') or f.endswith('.h5')]
+            cache_files = [f for f in os.listdir(video_folder_path) if f.endswith(tuple(type))]
             for cache_file in cache_files:
                 os.remove(os.path.join(video_folder_path, cache_file))
 
@@ -118,3 +118,40 @@ def pack_h5_data(project_path):
     config_path = os.path.join(project_path, "config.yaml")
     config = load_config(project_path)
     deeplabcut.convertcsv2h5(config_path, userfeedback=False, scorer=config['scorer'])
+    
+    
+
+def change_video_name(project_path, old_name, new_name):
+    config = load_config(project_path)
+    video_sets = config['video_sets']
+    old_video_path = os.path.join(os.getcwd(), project_path, 'videos', f"{old_name}.mp4")
+    video_key = list(video_sets.keys())
+    new_video_path = None
+    for key in video_key:
+        if key.endswith(f"\\{old_name}.mp4"):
+            # update config file
+            new_video_path = os.path.join(os.getcwd(), project_path, 'videos', f"{new_name}.mp4")
+            new_video_path = new_video_path.replace("\\", "/")
+            video_sets[new_video_path] = video_sets.pop(key)
+            config['video_sets'] = video_sets
+            save_config(project_path, config)
+    
+    if new_video_path is None:
+        print(f"Video name {old_name} not found in config.yaml")
+        
+    # rename the video file
+    if os.path.exists(old_video_path):
+        new_video_path = os.path.join(os.getcwd(), project_path, 'videos', f"{new_name}.mp4")
+        os.rename(old_video_path, new_video_path)
+    else:
+        print(f"Video file {old_video_path} not found")
+    
+    # change the labels file name
+    labels_dir = os.path.join(project_path, 'labeled-data')
+    old_dir = os.path.join(labels_dir, old_name)
+    new_dir = os.path.join(labels_dir, new_name)
+    if os.path.exists(old_dir):
+        os.rename(old_dir, new_dir)
+    else:
+        print(f"Labels directory {old_dir} not found")
+
