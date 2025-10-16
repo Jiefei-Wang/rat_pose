@@ -1,9 +1,17 @@
 import os
-from modules.dlc_utils import remove_all_cache, reconstruct_labeled_data, pack_h5_data, change_video_name
+from modules.dlc_utils import remove_all_cache, reconstruct_labeled_data, pack_h5_data, change_video_name, rebase_project
 
 
 
 project_path = "projects/rat_pose"
+
+###############################
+# Rebase project
+# make sure the video path is correct
+###############################
+rebase_project(project_path)
+
+
 ###############################
 # Simplify video name.
 ###############################
@@ -15,6 +23,12 @@ change_video_name(project_path, "Rat_Tracking_Video_Generation_Request (1)", "ai
 change_video_name(project_path, "Rat_Video_Generated_Successfully", "ai6")
 change_video_name(project_path, "Video_for_Rat_Tracking_Training (3)", "ai7")
 change_video_name(project_path, "Rat_Tracking_Video_Generation_Request", "ai8")
+
+
+
+
+
+
 
 ###############################
 # 1. delete all images and h5 data

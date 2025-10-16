@@ -5,6 +5,8 @@ import pandas as pd
 import yaml
 import deeplabcut
 from modules.image_utils import get_image_from_video, save_image
+from pathlib import Path
+
 
 def load_config(project_path):
     config_path = os.path.join(project_path, 'config.yaml')
@@ -155,3 +157,38 @@ def change_video_name(project_path, old_name, new_name):
     else:
         print(f"Labels directory {old_dir} not found")
 
+
+
+def get_full_path(p, base=None):
+    """
+    Return an absolute path for p. If p is relative and base is provided,
+    base is used as the anchor. Uses resolve(strict=False) so it works even
+    if the target doesn't exist yet.
+    """
+    path = Path(p)
+    if base and not path.is_absolute():
+        path = Path(base) / path
+    return str(path.resolve(strict=False))
+
+def rebase_project(project_path):
+    full_project_path = get_full_path(project_path)
+    config = load_config(project_path)
+    if 'project_path' in config:
+        config['project_path'] = full_project_path
+        
+    video_sets = config['video_sets']
+    video_keys = list(video_sets.keys())
+    # regular expression to capture videos/XXX.mp4
+    pattern = r"videos[\\/](?P<name>[^\\/]+\.mp4)"
+    video_names = []
+    for key in video_keys:
+        video_names.extend(re.findall(pattern, key, flags=re.IGNORECASE))
+    
+    new_video_set = {}
+    for i in range(len(video_keys)):
+        new_video_key = os.path.join(full_project_path, "videos", video_names[i])
+        new_video_set[new_video_key] = video_sets[video_keys[i]]
+    
+    config["video_sets"] = new_video_set
+    save_config(project_path, config)
+    
