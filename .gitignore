@@ -8,3 +8,4 @@ output/sleap_skeleton
 __pycache__
 .DS_Store
 test.py
+projects/*/dlc-models-pytorch

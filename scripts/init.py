@@ -25,8 +25,7 @@ change_video_name(project_path, "Video_for_Rat_Tracking_Training (3)", "ai7")
 change_video_name(project_path, "Rat_Tracking_Video_Generation_Request", "ai8")
 
 
-
-
+    
 
 
 

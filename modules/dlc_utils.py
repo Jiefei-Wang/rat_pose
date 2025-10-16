@@ -156,6 +156,17 @@ def change_video_name(project_path, old_name, new_name):
         os.rename(old_dir, new_dir)
     else:
         print(f"Labels directory {old_dir} not found")
+    
+    # read the csv file and change the video name in column B
+    if os.path.exists(new_dir):
+        csv_files = [f for f in os.listdir(new_dir) if f.endswith('.csv')]
+        for csv_file in csv_files:
+            csv_path = os.path.join(new_dir, csv_file)
+            df = pd.read_csv(csv_path, header=None)
+            df.iloc[3:, 1] = new_name
+            df.to_csv(csv_path, index=False, header=False)
+    else:
+        print(f"Labels directory {new_dir} not found")
 
 
 
