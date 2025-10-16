@@ -42,7 +42,7 @@ move2corner: true
 multianimalproject: false
 numframes2pick: 20
 pcutoff: 0.6
-project_path: G:\My Drive\projects\Green_Tom\rat_pose\post_model\projects\rat_pose
+project_path: C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose
 scorer: T
 skeleton:
 - - head
@@ -86,25 +86,25 @@ snapshotindex: -1
 start: 0
 stop: 1
 video_sets:
-  G:/My Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai1.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\Camera4_stitched.mp4:
     crop: 0, 1280, 0, 720
-  G:/My Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai2.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\RAT 11 FR1.mp4:
     crop: 0, 1280, 0, 720
-  G:/My Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai3.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\ai1.mp4:
     crop: 0, 1280, 0, 720
-  G:/My Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai4.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\ai2.mp4:
     crop: 0, 1280, 0, 720
-  G:/My Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai5.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\ai3.mp4:
     crop: 0, 1280, 0, 720
-  G:/My Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai6.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\ai4.mp4:
     crop: 0, 1280, 0, 720
-  G:/My Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai7.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\ai5.mp4:
     crop: 0, 1280, 0, 720
-  G:/My Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai8.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\ai6.mp4:
     crop: 0, 1280, 0, 720
-  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Camera4_stitched.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\ai7.mp4:
     crop: 0, 1280, 0, 720
-  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\RAT 11 FR1.mp4:
+  C:\Users\jiefei\Desktop\devel\post_model\projects\rat_pose\videos\ai8.mp4:
     crop: 0, 1280, 0, 720
 x1: 0
 x2: 640
