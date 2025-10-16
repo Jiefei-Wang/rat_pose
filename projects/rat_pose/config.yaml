@@ -1,50 +1,9 @@
-# Project definitions (do not edit)
+SuperAnimalConversionTables: null
 Task: Sleap_Rat_test
-scorer: T
-date: Oct2
-multianimalproject: false
-identity:
-
-
-# Project path (change when moving around)
-project_path: G:\My 
-  Drive\projects\Green_Tom\rat_pose\post_model\projects\rat_pose
-
-
-# Default DeepLabCut engine to use for shuffle creation (either pytorch or tensorflow)
-engine: pytorch
-
-
-# Annotation data set configuration (and individual video cropping parameters)
-video_sets:
-  G:/My 
-    Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai1.mp4:
-    crop: 0, 1280, 0, 720
-  G:/My 
-    Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai2.mp4:
-    crop: 0, 1280, 0, 720
-  G:/My 
-    Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai3.mp4:
-    crop: 0, 1280, 0, 720
-  G:/My 
-    Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai4.mp4:
-    crop: 0, 1280, 0, 720
-  G:/My 
-    Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai5.mp4:
-    crop: 0, 1280, 0, 720
-  G:/My 
-    Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai6.mp4:
-    crop: 0, 1280, 0, 720
-  G:/My 
-    Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai7.mp4:
-    crop: 0, 1280, 0, 720
-  G:/My 
-    Drive/projects/Green_Tom/rat_pose/post_model/projects/rat_pose/videos/ai8.mp4:
-    crop: 0, 1280, 0, 720
-  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Camera4_stitched.mp4:
-    crop: 0, 1280, 0, 720
-  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\RAT 11 FR1.mp4:
-    crop: 0, 1280, 0, 720
+TrainingFraction:
+- 0.95
+alphavalue: 0.7
+batch_size: 8
 bodyparts:
 - head
 - nose
@@ -65,15 +24,26 @@ bodyparts:
 - R_knee
 - L_knee
 - L_frontpaw
-
-
-# Fraction of video to start/stop when extracting frames for labeling/refinement
-start: 0
-stop: 1
+colormap: rainbow
+corner2move2:
+- 50
+- 50
+cropping: false
+date: Oct2
+default_augmenter: default
+default_net_type: resnet_50
+detector_batch_size: 1
+detector_snapshotindex: -1
+dotsize: 12
+engine: pytorch
+identity: null
+iteration: 0
+move2corner: true
+multianimalproject: false
 numframes2pick: 20
-
-
-# Plotting configuration
+pcutoff: 0.6
+project_path: G:\My Drive\projects\Green_Tom\rat_pose\post_model\projects\rat_pose
+scorer: T
 skeleton:
 - - head
   - nose
@@ -112,39 +82,31 @@ skeleton:
 - - R_knee
   - R_backpaw
 skeleton_color: black
-pcutoff: 0.6
-dotsize: 12
-alphavalue: 0.7
-colormap: rainbow
-
-
-# Training,Evaluation and Analysis configuration
-TrainingFraction:
-- 0.95
-iteration: 0
-default_net_type: resnet_50
-default_augmenter: default
 snapshotindex: -1
-detector_snapshotindex: -1
-batch_size: 8
-detector_batch_size: 1
-
-
-# Cropping Parameters (for analysis and outlier frame detection)
-cropping: false
-#if cropping is true for analysis, then set the values here:
+start: 0
+stop: 1
+video_sets:
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Camera4_stitched.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\RAT 11 FR1.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Rat_Tracking_Video_Generation_Request (1).mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Rat_Tracking_Video_Generation_Request (2).mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Rat_Tracking_Video_Generation_Request (3).mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Rat_Tracking_Video_Generation_Request.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Rat_Video_Generated_Successfully.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Rat_Video_Generation_Request_Fulfilled.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Video_Generation_Rat_in_Chamber.mp4:
+    crop: 0, 1280, 0, 720
+  G:\My Drive\projects\Green Tom\rat_pose\post_model\videos\Video_for_Rat_Tracking_Training (3).mp4:
+    crop: 0, 1280, 0, 720
 x1: 0
 x2: 640
 y1: 277
 y2: 624
-
-
-# Refinement configuration (parameters from annotation dataset configuration also relevant in this stage)
-corner2move2:
-- 50
-- 50
-move2corner: true
-
-
-# Conversion tables to fine-tune SuperAnimal weights
-SuperAnimalConversionTables:
