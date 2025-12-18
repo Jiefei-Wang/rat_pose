@@ -1,0 +1,71 @@
+affine:
+  p: 0.5
+  rotation: 30
+  scaling:
+  - 0.5
+  - 1.25
+  translation: 0
+crop_sampling:
+  width: 448
+  height: 448
+  max_shift: 0.1
+  method: hybrid
+gaussian_noise: 12.75
+motion_blur: true
+normalize_images: true
+auto_padding:
+  pad_width_divisor: 32
+  pad_height_divisor: 32
+transform:
+- augmentation: ImageCompression
+  quality_lower: 20
+  quality_upper: 90
+  p: 1
+- augmentation: RandomSunFlare
+  p: 1
+  flare_roi:
+    - 0.0
+    - 0.0
+    - 1.0
+    - 1
+  angle_lower: 0.0
+  angle_upper: 1.0
+  num_flare_circles_lower: 1
+  num_flare_circles_upper: 4
+  src_radius: 40
+  src_color:
+    - 255
+    - 245
+    - 230
+- augmentation: RandomRain
+  slant_lower: -1
+  slant_upper: 1
+  drop_length: 15
+  drop_width: 4
+  drop_color:
+  - 200
+  - 200
+  - 200
+  blur_value: 7
+  brightness_coefficient: 0.8
+  rain_type: drizzle
+  p: 1
+- augmentation: Sharpen
+  alpha:
+  - 0
+  - 1.0
+  lightness:
+  - 0.5
+  - 1.0
+  p: 1
+- augmentation: HueSaturationValue
+  hue_shift_limit:
+  - -5
+  - 5
+  sat_shift_limit:
+  - -60
+  - 60
+  val_shift_limit:
+  - -20
+  - 20
+  p: 1

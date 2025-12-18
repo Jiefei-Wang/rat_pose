@@ -55,7 +55,7 @@ def reconstruct_labeled_data(project_path):
     labelled_folders = [f for f in os.listdir(labeled_data_path) 
                     if os.path.isdir(os.path.join(labeled_data_path, f))]
     
-    video_files = [f for f in os.listdir(videos_path) if f.endswith('.mp4')]
+    video_files = [f for f in os.listdir(videos_path) if f.endswith(('.mp4', '.mkv'))]
     video_names = [os.path.splitext(f)[0] for f in video_files]
     
     # Make sure only process video folders that have corresponding video files
@@ -64,10 +64,12 @@ def reconstruct_labeled_data(project_path):
     
     print(f"Found {len(video_folders)} video folders in labeled-data directory")
     
-    for video_folder in video_folders:
+    for i in range(len(video_folders)):
+        video_folder = video_folders[i]
+        video_file = video_files[i]
         print(f"\nProcessing video folder: {video_folder}")
         label_folder_path = os.path.join(labeled_data_path, video_folder)
-        video_path = os.path.join(videos_path, f"{video_folder}.mp4")
+        video_path = os.path.join(videos_path, video_file)
         
         # delete the existing png files in the label folder
         png_files = [f for f in os.listdir(label_folder_path) if f.endswith('.png')]
@@ -89,23 +91,20 @@ def reconstruct_labeled_data(project_path):
         try:
             # Read the CSV file
             df = pd.read_csv(csv_path)
-            image_frames = df['Unnamed: 2'].tolist()
-            image_frames = [i for i in image_frames if isinstance(i, str)]
+            image_frames_char = df['Unnamed: 2'].tolist()
+            image_frames = [i for i in image_frames_char if isinstance(i, str)]
             
-            # Extract frame indices from filenames (format: img{frame_idx}.png)
-            frame_indices = []
-            for frame in image_frames:
-                match = re.match(r'img(\d+)\.png', frame)
+            # Extract frame indices from image filenames
+            for frame_filename in image_frames:
+                # Extract frame index from filename (format: img{frame_idx}.png)
+                match = re.match(r'img(\d+)\.png', frame_filename)
                 if match:
                     frame_idx = int(match.group(1))
-                    frame_indices.append(frame_idx)
+                    frame = get_image_from_video(video_path, frame_idx)
+                    output_path = os.path.join(label_folder_path, frame_filename)
+                    save_image(output_path, frame)
                 else:
-                    raise ValueError(f"Could not extract frame index from: {frame} in {video_folder}")
-
-            for frame_idx in frame_indices:
-                frame = get_image_from_video(video_path, frame_idx)
-                output_path = os.path.join(label_folder_path, f"img{frame_idx:03d}.png")
-                save_image(output_path, frame)
+                    print(f"  Warning: Could not extract frame index from: {frame_filename}")
                 
         except Exception as e:
             print(f"  Error processing {video_folder}: {e}")
@@ -119,7 +118,7 @@ def pack_h5_data(project_path):
     """
     config_path = os.path.join(project_path, "config.yaml")
     config = load_config(project_path)
-    deeplabcut.convertcsv2h5(config_path, userfeedback=False, scorer=config['scorer'])
+    deeplabcut.convertcsv2h5(config_path, userfeedback=False)
     
     
 

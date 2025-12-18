@@ -9,3 +9,7 @@ __pycache__
 .DS_Store
 test.py
 projects/*/dlc-models-pytorch
+*.mkv
+*.pickle
+design.md
+projects/rat_pose/train_dropin copy.yaml

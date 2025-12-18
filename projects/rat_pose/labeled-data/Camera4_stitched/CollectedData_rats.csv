@@ -1,4 +1,4 @@
-scorer,,,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T,T
+scorer,,,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats,rats
 bodyparts,,,head,head,nose,nose,spine1,spine1,spine2,spine2,spine3,spine3,tailbase,tailbase,tail1,tail1,tail2,tail2,tail_tip,tail_tip,L_hip,L_hip,L_backpaw,L_backpaw,R_backpaw,R_backpaw,L_shoulder,L_shoulder,R_frontpaw,R_frontpaw,R_shoulder,R_shoulder,R_hip,R_hip,R_knee,R_knee,L_knee,L_knee,L_frontpaw,L_frontpaw
 coords,,,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y,x,y
 labeled-data,Camera4_stitched,img1506.png,483.7182051613991,425.7959141447884,420.208027956406,574.3307893072202,547.5061878171828,405.0324575292702,615.7877944422602,382.9386277467052,684.2158840798398,363.16889059033394,788.123556137733,438.0805005404361,786.2256242254884,416.5038298406012,,,,,714.2940444524035,469.9624593836655,666.1927936039191,539.4854173603892,,,532.3634935184164,540.2312497296396,,,,,,,,,711.1075843665417,521.4840698242188,512.1057082114986,572.6138383500868

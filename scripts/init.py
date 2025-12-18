@@ -12,6 +12,7 @@ project_path = "projects/rat_pose"
 rebase_project(project_path)
 
 
+
 ###############################
 # Simplify video name.
 ###############################
@@ -38,4 +39,5 @@ remove_all_cache(project_path)
 reconstruct_labeled_data(project_path)
 pack_h5_data(project_path)
 
-
+from deeplabcut import convertcsv2h5
+convertcsv2h5(project_path + '/config.yaml', userfeedback=False)
