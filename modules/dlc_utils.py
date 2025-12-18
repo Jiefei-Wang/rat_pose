@@ -6,6 +6,7 @@ import yaml
 import deeplabcut
 from modules.image_utils import get_image_from_video, save_image
 from pathlib import Path
+import copy
 
 
 def load_config(project_path):
@@ -36,7 +37,7 @@ def remove_all_cache(project_path, type = ['.png', '.h5']):
                 os.remove(os.path.join(video_folder_path, cache_file))
 
 
-def reconstruct_labeled_data(project_path):
+def reconstruct_labeled_data(project_path, refresh=False):
     """
     Reconstructs labeled data by extracting frames from videos based on existing CSV files.
     
@@ -55,12 +56,16 @@ def reconstruct_labeled_data(project_path):
     labelled_folders = [f for f in os.listdir(labeled_data_path) 
                     if os.path.isdir(os.path.join(labeled_data_path, f))]
     
-    video_files = [f for f in os.listdir(videos_path) if f.endswith(('.mp4', '.mkv'))]
-    video_names = [os.path.splitext(f)[0] for f in video_files]
+    video_files_all = [f for f in os.listdir(videos_path) if f.endswith(('.mp4', '.mkv'))]
+    video_names = [os.path.splitext(f)[0] for f in video_files_all]
     
-    # Make sure only process video folders that have corresponding video files
-    video_folders = [f for f in labelled_folders if f in video_names]
-    
+    # Match video folders with video files
+    video_folders = []
+    video_files = []
+    for i in range(len(video_names)):
+        if video_names[i] in labelled_folders:
+            video_folders.append(video_names[i])
+            video_files.append(video_files_all[i])
     
     print(f"Found {len(video_folders)} video folders in labeled-data directory")
     
@@ -71,10 +76,12 @@ def reconstruct_labeled_data(project_path):
         label_folder_path = os.path.join(labeled_data_path, video_folder)
         video_path = os.path.join(videos_path, video_file)
         
-        # delete the existing png files in the label folder
         png_files = [f for f in os.listdir(label_folder_path) if f.endswith('.png')]
-        for png_file in png_files:
-            os.remove(os.path.join(label_folder_path, png_file))
+        if refresh:
+            # delete the existing png files in the label folder
+            for png_file in png_files:
+                os.remove(os.path.join(label_folder_path, png_file))
+        
         
         # Find CSV file in the video folder
         csv_files = [f for f in os.listdir(label_folder_path) if f.endswith('.csv')]
@@ -92,10 +99,14 @@ def reconstruct_labeled_data(project_path):
             # Read the CSV file
             df = pd.read_csv(csv_path)
             image_frames_char = df['Unnamed: 2'].tolist()
-            image_frames = [i for i in image_frames_char if isinstance(i, str)]
+            # remove na values
+            image_frames_char = [i for i in image_frames_char if isinstance(i, str)]
+            # remove duplicates
+            image_frames_char = list(set(image_frames_char) - set(png_files))
+            
             
             # Extract frame indices from image filenames
-            for frame_filename in image_frames:
+            for frame_filename in image_frames_char:
                 # Extract frame index from filename (format: img{frame_idx}.png)
                 match = re.match(r'img(\d+)\.png', frame_filename)
                 if match:
@@ -116,6 +127,7 @@ def pack_h5_data(project_path):
     """
     Prepare the h5 data for training
     """
+    remove_all_cache(project_path, type=['.h5'])
     config_path = os.path.join(project_path, "config.yaml")
     config = load_config(project_path)
     deeplabcut.convertcsv2h5(config_path, userfeedback=False)
@@ -201,4 +213,15 @@ def rebase_project(project_path):
     
     config["video_sets"] = new_video_set
     save_config(project_path, config)
+    
+    
+# set the augmentation probability in the model config
+def set_transform_prob(model_cfg, prob=0.2):
+    model_cfg = copy.deepcopy(model_cfg)
+    trans = model_cfg["data"]["train"]['transform']
+    for i in range(len(trans)):
+        item = trans[i]
+        if 'p' in item:
+            item['p'] = prob
+    return model_cfg
     
