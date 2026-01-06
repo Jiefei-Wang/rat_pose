@@ -200,8 +200,8 @@ def rebase_project(project_path):
         
     video_sets = config['video_sets']
     video_keys = list(video_sets.keys())
-    # regular expression to capture videos/XXX.mp4
-    pattern = r"videos[\\/](?P<name>[^\\/]+\.mp4)"
+    # regular expression to capture videos/XXX.mp4 or XXX.mkv
+    pattern = r"videos[\\/](?P<name>[^\\/]+\.(?:mp4|mkv))"
     video_names = []
     for key in video_keys:
         video_names.extend(re.findall(pattern, key, flags=re.IGNORECASE))

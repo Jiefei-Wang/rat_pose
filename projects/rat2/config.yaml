@@ -1,0 +1,122 @@
+SuperAnimalConversionTables: null
+Task: rat
+TrainingFraction:
+- 0.95
+alphavalue: 0.7
+batch_size: 32
+bodyparts:
+- head
+- nose
+- spine1
+- spine2
+- spine3
+- tailbase
+- tail1
+- tail2
+- tail_tip
+- L_hip
+- L_backpaw
+- R_backpaw
+- L_shoulder
+- R_frontpaw
+- R_shoulder
+- R_hip
+- R_knee
+- L_knee
+- L_frontpaw
+colormap: rainbow
+corner2move2:
+- 50
+- 50
+cropping: false
+date: Oct2
+default_augmenter: default
+default_net_type: resnet_50
+detector_batch_size: 1
+detector_snapshotindex: -1
+dotsize: 12
+engine: pytorch
+identity: null
+iteration: 0
+move2corner: true
+multianimalproject: false
+numframes2pick: 20
+pcutoff: 0.6
+project_path: F:\code\pose_track\projects\rat2
+scorer: rats
+skeleton:
+- - head
+  - nose
+- - head
+  - spine1
+- - spine1
+  - spine2
+- - spine2
+  - spine3
+- - spine1
+  - L_shoulder
+- - L_shoulder
+  - L_frontpaw
+- - spine3
+  - L_hip
+- - L_hip
+  - L_knee
+- - L_knee
+  - L_backpaw
+- - spine3
+  - tailbase
+- - tailbase
+  - tail1
+- - tail1
+  - tail2
+- - tail2
+  - tail_tip
+- - spine1
+  - R_shoulder
+- - R_shoulder
+  - R_frontpaw
+- - spine3
+  - R_hip
+- - R_hip
+  - R_knee
+- - R_knee
+  - R_backpaw
+skeleton_color: black
+snapshotindex: -1
+start: 0
+stop: 1
+video_sets:
+  F:\code\pose_track\projects\rat2\videos\2025-03-18 12-58-10.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\2025-03-18 12-58-46.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\2025-03-18 14-08-10.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\Camera4_stitched.mp4:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1.mp4:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 2 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 2 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 4 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 4 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 6 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 6 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 8 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 8 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+x1: 0
+x2: 1280
+y1: 0
+y2: 720

@@ -2,9 +2,11 @@ import os
 import shutil
 import pandas as pd
 
-new_label_path = "../rat_label"
-project_path = "projects/rat_pose"
-project_label_path = os.path.join(project_path, "labeled-data")
+project_label_path= "../rat_label"
+project_path = "projects/rat2"
+new_label_path = os.path.join(project_path, "labeled-data")
+
+
 
 # copy and replace all label files from new_label_path to project_label_path
 for session_folder in os.listdir(new_label_path):
