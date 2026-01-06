@@ -56,8 +56,12 @@ video_sets:
     crop: 0, 1280, 0, 720
   F:\code\pose_track\projects\rat_pose\videos\ai8.mp4:
     crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat_pose\videos\Camera4_stitched - Trim.mp4:
-    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat_pose\videos\2025-03-18 12-58-10.mkv:
+    crop: 0, 1920, 0, 1080
+  F:\code\pose_track\projects\rat_pose\videos\2025-03-18 12-58-46.mkv:
+    crop: 0, 1920, 0, 1080
+  F:\code\pose_track\projects\rat_pose\videos\2025-03-18 14-08-10.mkv:
+    crop: 0, 1920, 0, 1080
 bodyparts:
 - head
 - nose
