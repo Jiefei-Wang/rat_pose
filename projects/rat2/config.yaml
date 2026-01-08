@@ -1,9 +1,53 @@
-SuperAnimalConversionTables: null
+# Project definitions (do not edit)
 Task: rat
-TrainingFraction:
-- 0.95
-alphavalue: 0.7
-batch_size: 32
+scorer: rats
+date: Oct2
+multianimalproject: false
+identity:
+
+
+# Project path (change when moving around)
+project_path: F:\code\pose_track\projects\rat2
+
+
+# Default DeepLabCut engine to use for shuffle creation (either pytorch or tensorflow)
+engine: pytorch
+
+
+# Annotation data set configuration (and individual video cropping parameters)
+video_sets:
+  F:\code\pose_track\projects\rat2\videos\2025-03-18 12-58-10.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\2025-03-18 12-58-46.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\2025-03-18 14-08-10.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\Camera4_stitched.mp4:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1.mp4:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 2 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 2 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 4 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 4 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 6 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 6 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 8 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\RAT 8 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  F:\code\pose_track\projects\rat2\videos\2025-03-18 14-08-10.mp4:
+    crop: 0, 1280, 0, 720
 bodyparts:
 - head
 - nose
@@ -24,26 +68,15 @@ bodyparts:
 - R_knee
 - L_knee
 - L_frontpaw
-colormap: rainbow
-corner2move2:
-- 50
-- 50
-cropping: false
-date: Oct2
-default_augmenter: default
-default_net_type: resnet_50
-detector_batch_size: 1
-detector_snapshotindex: -1
-dotsize: 12
-engine: pytorch
-identity: null
-iteration: 0
-move2corner: true
-multianimalproject: false
+
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
+start: 0
+stop: 1
 numframes2pick: 20
-pcutoff: 0.6
-project_path: F:\code\pose_track\projects\rat2
-scorer: rats
+
+
+# Plotting configuration
 skeleton:
 - - head
   - nose
@@ -82,41 +115,39 @@ skeleton:
 - - R_knee
   - R_backpaw
 skeleton_color: black
+pcutoff: 0.6
+dotsize: 12
+alphavalue: 0.7
+colormap: rainbow
+
+
+# Training,Evaluation and Analysis configuration
+TrainingFraction:
+- 0.95
+iteration: 0
+default_net_type: resnet_50
+default_augmenter: default
 snapshotindex: -1
-start: 0
-stop: 1
-video_sets:
-  F:\code\pose_track\projects\rat2\videos\2025-03-18 12-58-10.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\2025-03-18 12-58-46.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\2025-03-18 14-08-10.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\Camera4_stitched.mp4:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1 10-02-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1 10-03-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 11 FR1.mp4:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 2 FR1 10-02-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 2 FR1 10-03-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 4 FR1 10-02-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 4 FR1 10-03-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 6 FR1 10-02-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 6 FR1 10-03-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 8 FR1 10-02-25.mkv:
-    crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\RAT 8 FR1 10-03-25.mkv:
-    crop: 0, 1280, 0, 720
+detector_snapshotindex: -1
+batch_size: 32
+detector_batch_size: 1
+
+
+# Cropping Parameters (for analysis and outlier frame detection)
+cropping: false
+#if cropping is true for analysis, then set the values here:
 x1: 0
 x2: 1280
 y1: 0
 y2: 720
+
+
+# Refinement configuration (parameters from annotation dataset configuration also relevant in this stage)
+corner2move2:
+- 50
+- 50
+move2corner: true
+
+
+# Conversion tables to fine-tune SuperAnimal weights
+SuperAnimalConversionTables:
