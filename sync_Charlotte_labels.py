@@ -7,6 +7,8 @@ project_path = "projects/rat2"
 new_label_path = os.path.join(project_path, "labeled-data")
 
 
+# new_label_path, project_label_path = project_label_path, new_label_path
+
 
 # copy and replace all label files from new_label_path to project_label_path
 for session_folder in os.listdir(new_label_path):
