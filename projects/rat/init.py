@@ -2,7 +2,7 @@ import os
 from modules.dlc_utils import remove_all_cache, reconstruct_labeled_data, pack_h5_data, change_video_name, rebase_project
 
 
-project_path = "projects/rat2"
+project_path = "projects/rat"
 
 ###############################
 # Rebase project
