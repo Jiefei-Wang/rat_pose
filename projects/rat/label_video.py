@@ -17,15 +17,17 @@ videofile_paths = [os.path.abspath(os.path.join(test_folder, video_file)) for vi
 
 shuffle=1
 output_folder = os.path.join(project_path, "labeled_video", str(shuffle))
+
 # to full path
 output_folder = os.path.abspath(output_folder)
 
+
+# analyze videos
 deeplabcut.analyze_videos(config_path, videofile_paths, shuffle=shuffle, destfolder  = output_folder)
 
 
+# create tracked video
 deeplabcut.create_labeled_video(config_path, videofile_paths, draw_skeleton=True, pcutoff=0.9, overwrite=True, shuffle=shuffle, destfolder  = output_folder)
 
-
-
-
-deeplabcut.extract_outlier_frames(config_path, videofile_paths, outlieralgorithm="jump", shuffle=shuffle)
+# extract outlier frames
+deeplabcut.extract_outlier_frames(config_path, videofile_paths, outlieralgorithm="jump", shuffle=shuffle, destfolder= output_folder, automatic =True)
