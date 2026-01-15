@@ -89,38 +89,42 @@ def reconstruct_labeled_data(project_path, refresh=False):
         if not csv_files:
             print(f"  No CSV file found in {video_folder}")
             continue
-        elif len(csv_files) > 1:
-            print(f"  Multiple CSV files found in {video_folder}, using first one: {csv_files[0]}")
         
-        csv_file = csv_files[0]
-        csv_path = os.path.join(label_folder_path, csv_file)
-        
-        try:
-            # Read the CSV file
-            df = pd.read_csv(csv_path)
-            image_frames_char = df['Unnamed: 2'].tolist()
-            # remove na values
-            image_frames_char = [i for i in image_frames_char if isinstance(i, str)]
-            # remove duplicates
+        for i in range(len(csv_files)):
+            print(f"  Processing CSV file: {csv_files[i]}")
+            csv_path = os.path.join(label_folder_path, csv_files[i])
+            numer_frames = csv_to_img(label_folder_path, video_path, csv_path, refresh=refresh)
+            print(f"    Extracted {numer_frames} frames")
+
+
+def csv_to_img(label_folder_path, video_path, csv_path, refresh=False):
+    try:
+        # Read the CSV file
+        df = pd.read_csv(csv_path)
+        image_frames_char = df['Unnamed: 2'].tolist()
+        # remove na values
+        image_frames_char = [i for i in image_frames_char if isinstance(i, str)]
+        # remove duplicates
+        if not refresh:
+            png_files = [f for f in os.listdir(label_folder_path) if f.endswith('.png')]
             image_frames_char = list(set(image_frames_char) - set(png_files))
-            
-            
-            # Extract frame indices from image filenames
-            for frame_filename in image_frames_char:
-                # Extract frame index from filename (format: img{frame_idx}.png)
-                match = re.match(r'img(\d+)\.png', frame_filename)
-                if match:
-                    frame_idx = int(match.group(1))
-                    frame = get_image_from_video(video_path, frame_idx)
-                    output_path = os.path.join(label_folder_path, frame_filename)
-                    save_image(output_path, frame)
-                else:
-                    print(f"  Warning: Could not extract frame index from: {frame_filename}")
-                
-        except Exception as e:
-            print(f"  Error processing {video_folder}: {e}")
-            continue
-    
+        
+        # Extract frame indices from image filenames
+        for frame_filename in image_frames_char:
+            # Extract frame index from filename (format: img{frame_idx}.png)
+            match = re.match(r'img(\d+)\.png', frame_filename)
+            if match:
+                frame_idx = int(match.group(1))
+                frame = get_image_from_video(video_path, frame_idx)
+                output_path = os.path.join(label_folder_path, frame_filename)
+                save_image(output_path, frame)
+            else:
+                print(f"  Warning: Could not extract frame index from: {frame_filename}")
+        return len(image_frames_char)
+    except Exception as e:
+        print(f"  Error processing {csv_path}: {e}")
+    return 0
+
 
 
 def pack_h5_data(project_path):

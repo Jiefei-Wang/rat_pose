@@ -7,7 +7,7 @@ identity:
 
 
 # Project path (change when moving around)
-project_path: F:\code\pose_track\projects\rat2
+project_path: F:\code\pose_track\projects\rat
 
 
 # Default DeepLabCut engine to use for shuffle creation (either pytorch or tensorflow)
@@ -68,6 +68,9 @@ bodyparts:
 - R_knee
 - L_knee
 - L_frontpaw
+
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
 
 
 # Fraction of video to start/stop when extracting frames for labeling/refinement

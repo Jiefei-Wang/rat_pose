@@ -5,24 +5,24 @@ from modules.dlc_utils import remove_all_cache, reconstruct_labeled_data, pack_h
 project_path = "projects/rat"
 
 ###############################
-# Rebase project
-# make sure the video path is correct
+# Rebase project so the video path is correct
+# This always assume your videos are in '{project_path}/videos'
 ###############################
 rebase_project(project_path)
 
 
 ###############################
-# 1. rebuild the images
-# 2. create h5
+# 1. create h5
+# 2. extract images from videos based on labels
 ###############################
 remove_all_cache(project_path)
-reconstruct_labeled_data(project_path)
 pack_h5_data(project_path)
+reconstruct_labeled_data(project_path)
 
 
 
 ###############################
-# verify labels
+# create images with labels
 ###############################
 import shutil
 # delete all existing label images
