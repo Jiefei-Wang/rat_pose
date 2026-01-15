@@ -34,7 +34,9 @@ def remove_all_cache(project_path, type = ['.png', '.h5']):
         if os.path.isdir(video_folder_path):
             cache_files = [f for f in os.listdir(video_folder_path) if f.endswith(tuple(type))]
             for cache_file in cache_files:
-                os.remove(os.path.join(video_folder_path, cache_file))
+                # exclude machine labels like machinelabels-iter0.h5
+                if not cache_file.startswith("machinelabels-iter"):
+                    os.remove(os.path.join(video_folder_path, cache_file))
 
 
 def reconstruct_labeled_data(project_path, refresh=False):
