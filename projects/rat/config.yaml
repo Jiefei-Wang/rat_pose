@@ -46,8 +46,6 @@ video_sets:
     crop: 0, 1280, 0, 720
   F:\code\pose_track\projects\rat2\videos\RAT 8 FR1 10-03-25.mkv:
     crop: 0, 1280, 0, 720
-  F:\code\pose_track\projects\rat2\videos\2025-03-18 14-08-10.mp4:
-    crop: 0, 1280, 0, 720
 bodyparts:
 - head
 - nose
