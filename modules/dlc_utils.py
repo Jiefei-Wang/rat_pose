@@ -92,9 +92,9 @@ def reconstruct_labeled_data(project_path, refresh=False):
             print(f"  No CSV file found in {video_folder}")
             continue
         
-        for i in range(len(csv_files)):
-            print(f"  Processing CSV file: {csv_files[i]}")
-            csv_path = os.path.join(label_folder_path, csv_files[i])
+        for j in range(len(csv_files)):
+            print(f"  Processing CSV file: {csv_files[j]}")
+            csv_path = os.path.join(label_folder_path, csv_files[j])
             numer_frames = csv_to_img(label_folder_path, video_path, csv_path, refresh=refresh)
             print(f"    Extracted {numer_frames} frames")
 
