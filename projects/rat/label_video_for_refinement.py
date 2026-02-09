@@ -2,25 +2,21 @@ import deeplabcut
 import os
 from deeplabcut.modelzoo import build_weight_init
 import shutil
-superanimal_name = 'superanimal_quadruped'
+from modules.dlc_utils import load_config
+shuffle=2
 project_path = 'projects/rat'
 config_path = os.path.abspath(os.path.join(project_path, "config.yaml"))
 
+config = load_config(project_path)
+video_sets = config['video_sets']
+video_path = list(video_sets.keys())
 
-test_folder = os.path.abspath(os.path.join(project_path, "videos/"))
 
-# Find all video files in the folder
-video_extensions = ['.mp4', '.avi', '.mov', '.mkv']
-video_files = [f for f in os.listdir(test_folder) if os.path.isfile(os.path.join(test_folder, f)) and os.path.splitext(f)[1].lower() in video_extensions]
-
-videofile_paths = [os.path.abspath(os.path.join(test_folder, video_file)) for video_file in video_files]
-
-shuffle=1
-output_folder = os.path.join(project_path, "labeled_video", str(shuffle))
+output_folder = os.path.join(project_path, f"labeled_video", str(shuffle))
 
 # to full path
+videofile_paths = [os.path.abspath(i) for i in video_path]
 output_folder = os.path.abspath(output_folder)
-
 
 # analyze videos
 deeplabcut.analyze_videos(config_path, videofile_paths, shuffle=shuffle, destfolder  = output_folder)
