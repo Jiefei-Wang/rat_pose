@@ -16,7 +16,7 @@ stat_report(project_path)
 # 1. create h5
 # 2. extract images from videos based on labels
 ###############################
-remove_all_cache(project_path)
+# remove_all_cache(project_path)
 reconstruct_labeled_data(project_path)
 pack_h5_data(project_path)
 
