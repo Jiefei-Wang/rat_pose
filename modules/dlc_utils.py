@@ -11,14 +11,82 @@ import copy
 
 def load_config(project_path):
     config_path = os.path.join(project_path, 'config.yaml')
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+    fix_dlc_config(config_path)
+    config = deeplabcut.auxiliaryfunctions.read_config(config_path)
     return config
 
 def save_config(project_path, config):
     config_path = os.path.join(project_path, 'config.yaml')
+    deeplabcut.auxiliaryfunctions.write_config(config_path, config)
+    fix_dlc_config(config_path)
+
+
+def fix_dlc_config(config_path):
+    """Fix video_sets entries missing explicit YAML key (?) notation.
+    
+    When paths contain spaces and wrap across lines, ruamel.yaml requires
+    the explicit ?/: key-value notation. This fixes entries that omit it.
+    """
+    with open(config_path, 'r') as f:
+        lines = f.readlines()
+
+    fixed_lines = []
+    in_video_sets = False
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if stripped == 'video_sets:':
+            in_video_sets = True
+            fixed_lines.append(line)
+            i += 1
+            continue
+
+        # Exit video_sets on non-indented, non-empty, non-comment line
+        if in_video_sets and stripped and not line[0].isspace():
+            in_video_sets = False
+
+        if in_video_sets and stripped.startswith('/'):
+            # Found a path key without explicit ? notation
+            indent = len(line) - len(line.lstrip())
+            indent_str = ' ' * indent
+
+            if stripped.endswith(':'):
+                # Single-line path key: "  /path/file.mp4:"
+                fixed_lines.append(f"{indent_str}? {stripped[:-1]}\n")
+                i += 1
+            else:
+                # Multi-line path key: "  /path/start...\n    ...end.mp4:"
+                fixed_lines.append(f"{indent_str}? {line.lstrip()}")
+                i += 1
+                while i < len(lines):
+                    cont = lines[i]
+                    if cont.strip().endswith(':'):
+                        trimmed = cont.rstrip().rstrip('\n')
+                        fixed_lines.append(f"{trimmed[:-1]}\n")
+                        i += 1
+                        break
+                    else:
+                        fixed_lines.append(cont)
+                        i += 1
+
+            # Next line is the value (e.g., "    crop: ...")
+            if i < len(lines):
+                val = lines[i].strip()
+                fixed_lines.append(f"{indent_str}: {val}\n")
+                i += 1
+            continue
+
+        fixed_lines.append(line)
+        i += 1
+
     with open(config_path, 'w') as f:
-        yaml.dump(config, f)
+        f.writelines(fixed_lines)
+
+
+
 
 def remove_all_cache(project_path, type = ['.png', '.h5']):
     """
@@ -221,6 +289,91 @@ def rebase_project(project_path):
     save_config(project_path, config)
     
     
+def stat_report(project_path):
+    """Report labeling statistics for each video in the project.
+    
+    Only reports on videos listed in config.yaml video_sets.
+    For each video folder in labeled-data/, reports:
+      - Manual labels: {#images with matching PNGs}/{#total label entries in CSV}
+      - Machine labels: {#images with matching PNGs}/{#total label entries in CSV}
+      - Corrected: machine-labeled images that also appear in manual labels
+    
+    Last line prints the total across all videos.
+    """
+    config = load_config(project_path)
+    labeled_data_path = os.path.join(project_path, 'labeled-data')
+    
+    if not os.path.exists(labeled_data_path):
+        print(f"Labeled data directory not found: {labeled_data_path}")
+        return
+    
+    # Extract video folder names from config video_sets keys
+    video_sets = config.get('video_sets', {})
+    folders = sorted([
+        Path(video_path).stem for video_path in video_sets.keys()
+    ])
+    
+    total_videos = 0
+    total_manual_matched = 0
+    total_manual_labels = 0
+    total_machine_matched = 0
+    total_machine_labels = 0
+    total_corrected = 0
+    
+    print(f"{'Video':<35} {'Manual (img/label)':<20} {'Machine (img/label)':<20} {'Corrected':<10}")
+    print("-" * 85)
+    
+    for folder in folders:
+        folder_path = os.path.join(labeled_data_path, folder)
+        if not os.path.isdir(folder_path):
+            print(f"{folder:<35} {'(folder missing)':<20}")
+            continue
+        
+        # Collect PNG filenames
+        png_files = {f for f in os.listdir(folder_path) if f.endswith('.png')}
+        
+        # Parse manual labels from CollectedData CSV
+        manual_csv = os.path.join(folder_path, 'CollectedData_rats.csv')
+        manual_images = set()
+        n_manual_labels = 0
+        if os.path.exists(manual_csv):
+            df = pd.read_csv(manual_csv, header=None, skiprows=3)
+            manual_images = set(df.iloc[:, 2].dropna().tolist())
+            n_manual_labels = len(manual_images)
+        
+        # Parse machine labels from machinelabels CSV
+        machine_csv = os.path.join(folder_path, 'machinelabels.csv')
+        machine_images = set()
+        n_machine_labels = 0
+        if os.path.exists(machine_csv):
+            df = pd.read_csv(machine_csv, header=None, skiprows=3)
+            machine_images = set(df.iloc[:, 2].dropna().tolist())
+            n_machine_labels = len(machine_images)
+        
+        # Matched = label images that have a corresponding PNG
+        n_manual_matched = len(manual_images & png_files)
+        n_machine_matched = len(machine_images & png_files)
+        
+        # Corrected = machine-labeled images that also have manual labels
+        n_corrected = len(machine_images & manual_images)
+        
+        total_videos += 1
+        total_manual_matched += n_manual_matched
+        total_manual_labels += n_manual_labels
+        total_machine_matched += n_machine_matched
+        total_machine_labels += n_machine_labels
+        total_corrected += n_corrected
+        
+        manual_str = f"{n_manual_matched}/{n_manual_labels}"
+        machine_str = f"{n_machine_matched}/{n_machine_labels}"
+        print(f"{folder:<35} {manual_str:<20} {machine_str:<20} {n_corrected:<10}")
+    
+    print("-" * 85)
+    manual_total = f"{total_manual_matched}/{total_manual_labels}"
+    machine_total = f"{total_machine_matched}/{total_machine_labels}"
+    print(f"{'TOTAL (' + str(total_videos) + ' videos)':<35} {manual_total:<20} {machine_total:<20} {total_corrected:<10}")
+
+
 # set the augmentation probability in the model config
 def set_transform_prob(model_cfg, prob=0.2):
     model_cfg = copy.deepcopy(model_cfg)

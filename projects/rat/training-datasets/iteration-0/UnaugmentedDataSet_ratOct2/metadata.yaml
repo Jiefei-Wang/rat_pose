@@ -12,3 +12,8 @@ shuffles:
     index: 2
     split: 2
     engine: pytorch
+  ratOct2-trainset95shuffle3:
+    train_fraction: 0.95
+    index: 3
+    split: 2
+    engine: pytorch
