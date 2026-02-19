@@ -296,7 +296,7 @@ def stat_report(project_path):
     For each video folder in labeled-data/, reports:
       - Manual labels: {#images with matching PNGs}/{#total label entries in CSV}
       - Machine labels: {#images with matching PNGs}/{#total label entries in CSV}
-      - Corrected: machine-labeled images that also appear in manual labels
+      - Uncorrected: machine-labeled images that do NOT appear in manual labels
     
     Last line prints the total across all videos.
     """
@@ -318,10 +318,10 @@ def stat_report(project_path):
     total_manual_labels = 0
     total_machine_matched = 0
     total_machine_labels = 0
-    total_corrected = 0
+    total_uncorrected = 0
     
-    print(f"{'Video':<35} {'Manual (img/label)':<20} {'Machine (img/label)':<20} {'Corrected':<10}")
-    print("-" * 85)
+    print(f"{'Video':<35} {'Manual (img/label)':<20} {'Machine (img/label)':<20} {'Uncorrected':<12}")
+    print("-" * 87)
     
     for folder in folders:
         folder_path = os.path.join(labeled_data_path, folder)
@@ -354,24 +354,24 @@ def stat_report(project_path):
         n_manual_matched = len(manual_images & png_files)
         n_machine_matched = len(machine_images & png_files)
         
-        # Corrected = machine-labeled images that also have manual labels
-        n_corrected = len(machine_images & manual_images)
+        # Uncorrected = machine-labeled images that do NOT have manual labels
+        n_uncorrected = len(machine_images - manual_images)
         
         total_videos += 1
         total_manual_matched += n_manual_matched
         total_manual_labels += n_manual_labels
         total_machine_matched += n_machine_matched
         total_machine_labels += n_machine_labels
-        total_corrected += n_corrected
+        total_uncorrected += n_uncorrected
         
         manual_str = f"{n_manual_matched}/{n_manual_labels}"
         machine_str = f"{n_machine_matched}/{n_machine_labels}"
-        print(f"{folder:<35} {manual_str:<20} {machine_str:<20} {n_corrected:<10}")
+        print(f"{folder:<35} {manual_str:<20} {machine_str:<20} {n_uncorrected:<12}")
     
-    print("-" * 85)
+    print("-" * 87)
     manual_total = f"{total_manual_matched}/{total_manual_labels}"
     machine_total = f"{total_machine_matched}/{total_machine_labels}"
-    print(f"{'TOTAL (' + str(total_videos) + ' videos)':<35} {manual_total:<20} {machine_total:<20} {total_corrected:<10}")
+    print(f"{'TOTAL (' + str(total_videos) + ' videos)':<35} {manual_total:<20} {machine_total:<20} {total_uncorrected:<12}")
 
 
 # set the augmentation probability in the model config
