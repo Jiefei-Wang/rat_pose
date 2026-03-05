@@ -1,5 +1,5 @@
 import os
-from modules.dlc_utils import remove_all_cache, reconstruct_labeled_data, pack_h5_data, change_video_name, rebase_project,stat_report
+from modules.dlc_utils import remove_all_cache, reconstruct_labeled_data, pack_h5_data, change_video_name, rebase_project,stat_report, find_unchanged_labels,remove_unchanged_labels
 
 
 project_path = "projects/rat"
@@ -11,6 +11,10 @@ project_path = "projects/rat"
 rebase_project(project_path)
 
 stat_report(project_path)
+
+unchanged = find_unchanged_labels("projects/rat", cutoff=1)
+remove_unchanged_labels(unchanged)
+
 
 ###############################
 # 1. create h5

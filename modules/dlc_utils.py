@@ -1,6 +1,7 @@
 
 import re
 import os
+import math
 import pandas as pd
 import yaml
 import deeplabcut
@@ -22,10 +23,12 @@ def save_config(project_path, config):
 
 
 def fix_dlc_config(config_path):
-    """Fix video_sets entries missing explicit YAML key (?) notation.
-    
-    When paths contain spaces and wrap across lines, ruamel.yaml requires
-    the explicit ?/: key-value notation. This fixes entries that omit it.
+    """Fix wrapped video_sets keys by joining them onto a single line.
+
+    When paths contain spaces, YAML line-wrapping can split a single key
+    across multiple lines, which breaks parsing. This function merges
+    wrapped key lines into a single long line without introducing ?/:.
+    It also normalizes legacy ?/: entries into plain "path: {crop...}".
     """
     with open(config_path, 'r') as f:
         lines = f.readlines()
@@ -33,6 +36,28 @@ def fix_dlc_config(config_path):
     fixed_lines = []
     in_video_sets = False
     i = 0
+
+    def _is_value_line(s):
+        s = s.strip()
+        if not s:
+            return False
+        if s.startswith('#'):
+            return False
+        if s.startswith('crop:'):
+            return True
+        if s.startswith(':'):
+            return s.lstrip(':').lstrip().startswith('crop:')
+        return False
+
+    def _clean_key_part(s):
+        s = s.strip()
+        if s.startswith('?'):
+            s = s[1:].lstrip()
+        if s.startswith(':'):
+            s = s[1:].lstrip()
+        if s.endswith(':'):
+            s = s[:-1]
+        return s
 
     while i < len(lines):
         line = lines[i]
@@ -44,40 +69,58 @@ def fix_dlc_config(config_path):
             i += 1
             continue
 
-        # Exit video_sets on non-indented, non-empty, non-comment line
-        if in_video_sets and stripped and not line[0].isspace():
-            in_video_sets = False
+        if in_video_sets:
+            # Exit video_sets on non-indented, non-empty, non-comment line
+            if stripped and not line[0].isspace():
+                in_video_sets = False
+                continue
 
-        if in_video_sets and stripped.startswith('/'):
-            # Found a path key without explicit ? notation
-            indent = len(line) - len(line.lstrip())
-            indent_str = ' ' * indent
+            # Parse and normalize video_sets entries
+            if line.startswith('  '):
+                indent_str = '  '
+                key_parts = []
+                value_lines = []
 
-            if stripped.endswith(':'):
-                # Single-line path key: "  /path/file.mp4:"
-                fixed_lines.append(f"{indent_str}? {stripped[:-1]}\n")
-                i += 1
-            else:
-                # Multi-line path key: "  /path/start...\n    ...end.mp4:"
-                fixed_lines.append(f"{indent_str}? {line.lstrip()}")
-                i += 1
+                # Collect key parts until we hit a value line
                 while i < len(lines):
-                    cont = lines[i]
-                    if cont.strip().endswith(':'):
-                        trimmed = cont.rstrip().rstrip('\n')
-                        fixed_lines.append(f"{trimmed[:-1]}\n")
-                        i += 1
+                    curr = lines[i]
+                    curr_stripped = curr.strip()
+                    if curr_stripped and not curr.startswith(' '):
                         break
-                    else:
-                        fixed_lines.append(cont)
+                    if not curr_stripped or curr_stripped.startswith('#'):
                         i += 1
+                        continue
+                    if _is_value_line(curr):
+                        val = curr_stripped
+                        if val.startswith(':'):
+                            val = val[1:].lstrip()
+                        if val.endswith(':'):
+                            val = val[:-1].rstrip()
+                        value_lines.append(f"    {val}\n")
+                        i += 1
+                        # Collect any additional value lines
+                        while i < len(lines):
+                            nxt = lines[i]
+                            nxt_stripped = nxt.strip()
+                            if not nxt.startswith('    ') or _is_value_line(nxt) is False:
+                                break
+                            val2 = nxt_stripped
+                            if val2.startswith(':'):
+                                val2 = val2[1:].lstrip()
+                            if val2.endswith(':'):
+                                val2 = val2[:-1].rstrip()
+                            value_lines.append(f"    {val2}\n")
+                            i += 1
+                        break
+                    key_parts.append(_clean_key_part(curr))
+                    i += 1
 
-            # Next line is the value (e.g., "    crop: ...")
-            if i < len(lines):
-                val = lines[i].strip()
-                fixed_lines.append(f"{indent_str}: {val}\n")
-                i += 1
-            continue
+                if key_parts:
+                    key = ' '.join(key_parts)
+                    fixed_lines.append(f"{indent_str}{key}:\n")
+                    if value_lines:
+                        fixed_lines.extend(value_lines)
+                    continue
 
         fixed_lines.append(line)
         i += 1
@@ -372,6 +415,215 @@ def stat_report(project_path):
     manual_total = f"{total_manual_matched}/{total_manual_labels}"
     machine_total = f"{total_machine_matched}/{total_machine_labels}"
     print(f"{'TOTAL (' + str(total_videos) + ' videos)':<35} {manual_total:<20} {machine_total:<20} {total_uncorrected:<12}")
+
+
+def _load_xy_from_label_csv(csv_path):
+    """
+    Load a DLC-style CSV and return a frame-indexed DataFrame of bodypart x/y columns.
+    If duplicate bodypart/coord columns exist across scorers, the first non-null value is used.
+    """
+    df = pd.read_csv(csv_path, header=[0, 1, 2])
+    if df.shape[1] < 4:
+        return pd.DataFrame()
+
+    frame_series = df.iloc[:, 2].astype(str).str.strip()
+    frame_series = frame_series.where(frame_series != "nan")
+
+    col_map = {}
+    for col in df.columns[3:]:
+        # DeepLabCut header columns are usually (scorer, bodypart, coord)
+        if len(col) < 3:
+            continue
+        bodypart = str(col[1]).strip()
+        coord = str(col[2]).strip().lower()
+        if coord not in ("x", "y"):
+            continue
+        col_map.setdefault((bodypart, coord), []).append(col)
+
+    out = pd.DataFrame({"frame": frame_series})
+    for (bodypart, coord), cols in col_map.items():
+        values = df.loc[:, cols]
+        if isinstance(values, pd.Series):
+            out[f"{bodypart}_{coord}"] = values
+        else:
+            out[f"{bodypart}_{coord}"] = values.bfill(axis=1).iloc[:, 0]
+
+    out = out.dropna(subset=["frame"]).set_index("frame")
+    # Keep one row per frame if duplicates exist.
+    out = out.groupby(level=0).first()
+    return out
+
+
+def find_unchanged_labels(project_path, cutoff=1):
+    """
+    Compare manual labels (CollectedData_rats.csv) vs machine labels (machinelabels.csv)
+    across labeled-data video folders.
+
+    For frames present in both files, report only if all shared
+    keypoints are within `cutoff` Euclidean distance.
+    Missing/non-missing mismatch for any keypoint coordinate is treated as larger than cutoff.
+
+    Returns:
+        list[dict]: each item includes:
+            - video_name
+            - frame_name
+            - manual_idx (0-based index in CollectedData_rats.csv data rows)
+            - manual_csv
+    """
+    labeled_data_path = os.path.join(project_path, "labeled-data")
+    if not os.path.isdir(labeled_data_path):
+        print(f"Labeled data directory not found: {labeled_data_path}")
+        return []
+
+    unchanged_frames = []
+
+    for video_name in sorted(os.listdir(labeled_data_path)):
+        video_dir = os.path.join(labeled_data_path, video_name)
+        if not os.path.isdir(video_dir):
+            continue
+
+        manual_csv = os.path.join(video_dir, "CollectedData_rats.csv")
+        machine_csv = os.path.join(video_dir, "machinelabels.csv")
+        if not (os.path.exists(manual_csv) and os.path.exists(machine_csv)):
+            continue
+
+        manual_df = _load_xy_from_label_csv(manual_csv)
+        machine_df = _load_xy_from_label_csv(machine_csv)
+        if manual_df.empty or machine_df.empty:
+            continue
+        
+        # Manual row index mapping in original CollectedData order (0..N-1).
+        manual_raw = pd.read_csv(manual_csv, header=[0, 1, 2])
+        manual_frames_raw = manual_raw.iloc[:, 2].astype(str).str.strip()
+        manual_frames_raw = manual_frames_raw.where(manual_frames_raw != "nan")
+        manual_idx_map = {}
+        for idx, frame in enumerate(manual_frames_raw.dropna()):
+            if frame not in manual_idx_map:
+                manual_idx_map[frame] = idx
+
+        manual_bps = {
+            c[:-2] for c in manual_df.columns
+            if c.endswith("_x") and f"{c[:-2]}_y" in manual_df.columns
+        }
+        machine_bps = {
+            c[:-2] for c in machine_df.columns
+            if c.endswith("_x") and f"{c[:-2]}_y" in machine_df.columns
+        }
+        shared_bps = manual_bps & machine_bps
+        if not shared_bps:
+            continue
+
+        shared_frames = manual_df.index.intersection(machine_df.index)
+        for frame_name in shared_frames:
+            manual_row = manual_df.loc[frame_name]
+            machine_row = machine_df.loc[frame_name]
+            frame_is_unchanged = True
+
+            for bp in shared_bps:
+                mx = manual_row.get(f"{bp}_x")
+                my = manual_row.get(f"{bp}_y")
+                px = machine_row.get(f"{bp}_x")
+                py = machine_row.get(f"{bp}_y")
+
+                m_missing = pd.isna(mx) or pd.isna(my)
+                p_missing = pd.isna(px) or pd.isna(py)
+
+                # Missing/non-missing mismatch counts as a large difference.
+                if m_missing != p_missing:
+                    frame_is_unchanged = False
+                    break
+
+                # If both are missing for this keypoint, treat as unchanged for this keypoint.
+                if m_missing and p_missing:
+                    continue
+
+                dist = math.hypot(float(mx) - float(px), float(my) - float(py))
+                if dist >= cutoff:
+                    frame_is_unchanged = False
+                    break
+
+            if frame_is_unchanged:
+                manual_idx = manual_idx_map.get(frame_name)
+                unchanged_frames.append({
+                    "video_name": video_name,
+                    "frame_name": frame_name,
+                    "manual_idx": manual_idx,
+                    "manual_csv": manual_csv,
+                })
+                print(f"{video_name}, {frame_name}, manual_idx={manual_idx}")
+
+    print(f"Total unchanged frames: {len(unchanged_frames)}")
+    return unchanged_frames
+
+
+def remove_unchanged_labels(unchanged):
+    """
+    Remove unchanged label rows from manual CSV files using find_unchanged_labels output.
+
+    This function removes raw CSV lines by line number (header_rows + manual_idx),
+    which preserves original file structure and empty-cell formatting.
+    """
+    if not unchanged:
+        print("No unchanged labels provided.")
+        return
+
+    header_rows = 3
+    remove_map = {}
+
+    for item in unchanged:
+        if isinstance(item, dict):
+            manual_csv = item.get("manual_csv")
+            manual_idx = item.get("manual_idx")
+        elif isinstance(item, (tuple, list)) and len(item) >= 4:
+            # Backward-compatible tuple/list support: (video_name, frame_name, manual_idx, manual_csv)
+            manual_idx = item[2]
+            manual_csv = item[3]
+        else:
+            continue
+
+        if manual_csv is None or manual_idx is None:
+            continue
+
+        if not isinstance(manual_idx, int):
+            try:
+                manual_idx = int(manual_idx)
+            except (TypeError, ValueError):
+                continue
+
+        remove_map.setdefault(manual_csv, set()).add(manual_idx)
+
+    total_removed = 0
+    for manual_csv, idx_set in remove_map.items():
+        if not os.path.exists(manual_csv):
+            print(f"File not found, skip: {manual_csv}")
+            continue
+
+        with open(manual_csv, "r", newline="") as f:
+            lines = f.readlines()
+
+        line_nums_to_remove = {
+            header_rows + idx
+            for idx in idx_set
+            if idx >= 0 and (header_rows + idx) < len(lines)
+        }
+
+        if not line_nums_to_remove:
+            print(f"No valid rows to remove: {manual_csv}")
+            continue
+
+        new_lines = [
+            line for line_no, line in enumerate(lines)
+            if line_no not in line_nums_to_remove
+        ]
+
+        with open(manual_csv, "w", newline="") as f:
+            f.writelines(new_lines)
+
+        removed_count = len(line_nums_to_remove)
+        total_removed += removed_count
+        print(f"Removed {removed_count} rows from {manual_csv}")
+
+    print(f"Total removed rows: {total_removed}")
 
 
 # set the augmentation probability in the model config
