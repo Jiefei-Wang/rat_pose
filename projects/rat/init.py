@@ -13,7 +13,7 @@ rebase_project(project_path)
 stat_report(project_path)
 
 unchanged = find_unchanged_labels("projects/rat", cutoff=5)
-remove_unchanged_labels(unchanged)
+# remove_unchanged_labels(unchanged)
 
 
 ###############################
