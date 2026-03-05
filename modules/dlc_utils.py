@@ -150,6 +150,37 @@ def remove_all_cache(project_path, type = ['.png', '.h5']):
                     os.remove(os.path.join(video_folder_path, cache_file))
 
 
+def delete_machine_labels(project_path):
+    """
+    Remove machine-generated label files (.csv, .h5) from labeled-data folders.
+
+    Targets files named like:
+      - machinelabels.csv
+      - machinelabels.h5
+      - machinelabels-iter*.csv
+      - machinelabels-iter*.h5
+    """
+    labeled_data_path = os.path.join(project_path, "labeled-data")
+    if not os.path.exists(labeled_data_path):
+        print(f"Labeled data directory not found: {labeled_data_path}")
+        return
+
+    removed = 0
+    for video_folder in os.listdir(labeled_data_path):
+        video_folder_path = os.path.join(labeled_data_path, video_folder)
+        if not os.path.isdir(video_folder_path):
+            continue
+
+        for filename in os.listdir(video_folder_path):
+            is_machine_label = filename.startswith("machinelabels")
+            is_target_ext = filename.endswith((".csv", ".h5"))
+            if is_machine_label and is_target_ext:
+                os.remove(os.path.join(video_folder_path, filename))
+                removed += 1
+
+    print(f"Removed {removed} machine label files.")
+
+
 def reconstruct_labeled_data(project_path, refresh=False):
     """
     Reconstructs labeled data by extracting frames from videos based on existing CSV files.
