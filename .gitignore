@@ -12,3 +12,6 @@ projects/*/dlc-models-pytorch
 *.pickle
 design.md
 projects/rat_pose/train_dropin copy.yaml
+
+projects/rat/test_snap
+projects/rat/test_video
