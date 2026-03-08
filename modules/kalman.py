@@ -1,5 +1,6 @@
 import os
 import re
+import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -9,6 +10,11 @@ import deeplabcut
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+
+try:
+    import torch
+except Exception:  # pragma: no cover - optional dependency
+    torch = None
 
 
 def _normalize_videos(videos: str | Iterable[str]) -> list[Path]:
@@ -632,6 +638,189 @@ def _subsample_indices(n_items: int, max_items: int) -> np.ndarray:
     return idx
 
 
+def _crop_patch_gray_runtime(image_gray: np.ndarray, x: float, y: float, patch_size: int) -> np.ndarray:
+    half = int(patch_size // 2)
+    h, w = image_gray.shape[:2]
+    cx = int(round(float(x)))
+    cy = int(round(float(y)))
+    x0 = cx - half
+    y0 = cy - half
+    x1 = x0 + patch_size
+    y1 = y0 + patch_size
+
+    pad_l = max(0, -x0)
+    pad_t = max(0, -y0)
+    pad_r = max(0, x1 - w)
+    pad_b = max(0, y1 - h)
+    if pad_l or pad_t or pad_r or pad_b:
+        image_gray = cv2.copyMakeBorder(
+            image_gray,
+            pad_t,
+            pad_b,
+            pad_l,
+            pad_r,
+            borderType=cv2.BORDER_CONSTANT,
+            value=0,
+        )
+        x0 += pad_l
+        y0 += pad_t
+    patch = image_gray[y0 : y0 + patch_size, x0 : x0 + patch_size]
+    if patch.shape[0] != patch_size or patch.shape[1] != patch_size:
+        patch = cv2.resize(patch, (patch_size, patch_size), interpolation=cv2.INTER_LINEAR)
+    return patch.astype(np.float32) / 255.0
+
+
+def _load_runtime_dispersion_model(kalman_params: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not kalman_params or torch is None:
+        return None
+    model_info = kalman_params.get("dispersion_model")
+    if not isinstance(model_info, dict):
+        return None
+    model_path = model_info.get("model_path")
+    meta_path = model_info.get("meta_path")
+    if not model_path or not meta_path:
+        return None
+    model_file = Path(str(model_path)).resolve()
+    meta_file = Path(str(meta_path)).resolve()
+    if not model_file.exists() or not meta_file.exists():
+        return None
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        if str(meta.get("model_type", "")) != "roi_joint_context_binary_cnn_jit_v1":
+            return None
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = torch.jit.load(str(model_file), map_location=device)
+        model = model.to(device)
+        model.eval()
+        joint_names = [str(x) for x in meta.get("joint_names", [])]
+        if not joint_names:
+            return None
+        joint_map = {name.split("|")[-1]: i for i, name in enumerate(joint_names)}
+        return {
+            "model": model,
+            "device": device,
+            "joint_names": joint_names,
+            "joint_map": joint_map,
+            "roi_size": int(meta.get("roi_size", 160)),
+            "meta_dim": int(meta.get("meta_dim", 0)),
+            "include_temporal_context": bool(meta.get("include_temporal_context", False)),
+        }
+    except Exception:
+        return None
+
+
+def _predict_dispersion_scores_with_model(
+    frame_idx: int,
+    frame_bgr: np.ndarray,
+    keypoints: np.ndarray,
+    joint_names: list[str],
+    model_ctx: dict[str, Any] | None,
+) -> np.ndarray:
+    base = np.asarray(keypoints[frame_idx, :, 2], dtype=np.float64).copy()
+    if model_ctx is None or torch is None:
+        return base
+    try:
+        model = model_ctx["model"]
+        device = model_ctx["device"]
+        joint_map = model_ctx["joint_map"]
+        model_joint_names = model_ctx["joint_names"]
+        roi_size = int(model_ctx["roi_size"])
+        include_temporal_context = bool(model_ctx["include_temporal_context"])
+        n_model_joints = len(model_joint_names)
+        if n_model_joints <= 0:
+            return base
+
+        xy_all = np.full((n_model_joints, 2), np.nan, dtype=np.float32)
+        conf_all = np.zeros((n_model_joints,), dtype=np.float32)
+        conf_prev_all = np.zeros((n_model_joints,), dtype=np.float32)
+        conf_next_all = np.zeros((n_model_joints,), dtype=np.float32)
+        disp_prev_all = np.ones((n_model_joints,), dtype=np.float32)
+        disp_next_all = np.ones((n_model_joints,), dtype=np.float32)
+
+        prev_t = max(0, frame_idx - 1)
+        next_t = min(keypoints.shape[0] - 1, frame_idx + 1)
+        for j_curr, name in enumerate(joint_names):
+            key = name.split("|")[-1]
+            m_idx = joint_map.get(key)
+            if m_idx is None:
+                continue
+            x, y, c = keypoints[frame_idx, j_curr]
+            xp, yp, cp = keypoints[prev_t, j_curr]
+            xn, yn, cn = keypoints[next_t, j_curr]
+            if np.isfinite(x) and np.isfinite(y):
+                xy_all[m_idx] = [x, y]
+            if np.isfinite(c):
+                conf_all[m_idx] = float(np.clip(c, 0.0, 1.0))
+            if np.isfinite(cp):
+                conf_prev_all[m_idx] = float(np.clip(cp, 0.0, 1.0))
+            if np.isfinite(cn):
+                conf_next_all[m_idx] = float(np.clip(cn, 0.0, 1.0))
+            if np.isfinite(x) and np.isfinite(y) and np.isfinite(xp) and np.isfinite(yp):
+                disp_prev_all[m_idx] = float(np.hypot(x - xp, y - yp))
+            if np.isfinite(x) and np.isfinite(y) and np.isfinite(xn) and np.isfinite(yn):
+                disp_next_all[m_idx] = float(np.hypot(x - xn, y - yn))
+
+        good = np.isfinite(xy_all).all(axis=1)
+        if np.count_nonzero(good) < 2:
+            return base
+        pts = xy_all[good]
+        min_xy = np.min(pts, axis=0)
+        max_xy = np.max(pts, axis=0)
+        w = max(8.0, float(max_xy[0] - min_xy[0]))
+        h = max(8.0, float(max_xy[1] - min_xy[1]))
+        mx = max(8.0, 0.25 * w)
+        my = max(8.0, 0.25 * h)
+        x0 = float(min_xy[0] - mx)
+        y0 = float(min_xy[1] - my)
+        x1 = float(max_xy[0] + mx)
+        y1 = float(max_xy[1] + my)
+
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        roi = _crop_patch_gray_runtime(
+            gray,
+            x=(x0 + x1) * 0.5,
+            y=(y0 + y1) * 0.5,
+            patch_size=int(max(roi_size, np.ceil(max(x1 - x0, y1 - y0)))),
+        )
+        roi = cv2.resize(roi, (roi_size, roi_size), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+
+        bw = max(1e-6, x1 - x0)
+        bh = max(1e-6, y1 - y0)
+        norm = max(1e-6, float(np.hypot(bw, bh)))
+        xrel = np.where(np.isfinite(xy_all[:, 0]), np.clip((xy_all[:, 0] - x0) / bw, 0.0, 1.0), 0.5)
+        yrel = np.where(np.isfinite(xy_all[:, 1]), np.clip((xy_all[:, 1] - y0) / bh, 0.0, 1.0), 0.5)
+
+        meta_items = [xrel.astype(np.float32), yrel.astype(np.float32), conf_all.astype(np.float32)]
+        if include_temporal_context:
+            dp = np.clip(np.nan_to_num(disp_prev_all / norm, nan=1.0, posinf=1.0, neginf=1.0), 0.0, 1.5).astype(np.float32)
+            dn = np.clip(np.nan_to_num(disp_next_all / norm, nan=1.0, posinf=1.0, neginf=1.0), 0.0, 1.5).astype(np.float32)
+            meta_items.extend([conf_prev_all.astype(np.float32), conf_next_all.astype(np.float32), dp, dn])
+        meta = np.concatenate(meta_items, axis=0).astype(np.float32)
+
+        query = np.column_stack([conf_all, xrel.astype(np.float32), yrel.astype(np.float32)]).astype(np.float32)
+        roi_batch = np.repeat(roi[None, None, :, :], n_model_joints, axis=0).astype(np.float32)
+        meta_batch = np.repeat(meta[None, :], n_model_joints, axis=0).astype(np.float32)
+        joint_ids = np.arange(n_model_joints, dtype=np.int64)
+
+        with torch.no_grad():
+            logits = model(
+                torch.from_numpy(roi_batch).to(device, non_blocking=True),
+                torch.from_numpy(meta_batch).to(device, non_blocking=True),
+                torch.from_numpy(joint_ids).to(device, non_blocking=True),
+                torch.from_numpy(query).to(device, non_blocking=True),
+            )
+            probs = torch.sigmoid(logits).detach().cpu().numpy().astype(np.float64)
+
+        for j_curr, name in enumerate(joint_names):
+            key = name.split("|")[-1]
+            m_idx = joint_map.get(key)
+            if m_idx is not None and 0 <= m_idx < probs.size:
+                base[j_curr] = probs[m_idx]
+        return np.clip(base, 0.0, 1.0)
+    except Exception:
+        return base
+
+
 def _append_capped_samples(dst: list[float], samples: np.ndarray, cap: int) -> None:
     if samples.size == 0 or len(dst) >= cap:
         return
@@ -1161,6 +1350,8 @@ def kalman_video(
     gate_threshold_offset: float = 0.0,
     max_pos_std_offset: float = 0.0,
     draw_conf_thresh_offset: float = 0.0,
+    stability_n: int = 1,
+    stability_k: int = 1,
 ) -> list[str]:
     """Render a video with Kalman-smoothed DLC keypoints."""
     if isinstance(kalman_params, tuple) and len(kalman_params) > 0:
@@ -1168,6 +1359,15 @@ def kalman_video(
 
     videos = _normalize_videos(videofile_path)
     output_videos: list[str] = []
+
+    stability_n = int(stability_n)
+    stability_k = int(stability_k)
+    if stability_n < 1:
+        stability_n = 1
+    if stability_n % 2 == 0:
+        raise ValueError("stability_n must be odd.")
+    stability_k = int(np.clip(stability_k, 1, stability_n))
+    half = stability_n // 2
 
     for video_path in videos:
         pred_df, result_h5 = _load_analyzed_predictions(config_path, video_path, shuffle, destfolder)
@@ -1242,6 +1442,7 @@ def kalman_video(
             per_joint_params=per_joint_cfg,
         )
         smoothed, visible_mask, effective_conf = tracker.smooth(keypoints)
+        dispersion_model_ctx = _load_runtime_dispersion_model(kalman_params)
         global_disp_threshold = float(np.clip(runtime_cfg.get("dispersion_threshold", 0.0), 0.0, 1.0))
         per_joint_disp_threshold = np.full(len(joint_names), global_disp_threshold, dtype=np.float64)
         for j, joint_name in enumerate(joint_names):
@@ -1272,6 +1473,9 @@ def kalman_video(
             raise IOError(f"Could not create output video: {out_path}")
 
         frame_idx = 0
+        next_output_pose_idx = 0
+        frame_buffer: list[np.ndarray] = []
+        base_visible_by_frame: list[np.ndarray] = []
         total_video_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if total_video_frames <= 0:
             total_video_frames = None
@@ -1282,28 +1486,87 @@ def kalman_video(
             unit="frame",
             leave=True,
         ) as pbar:
+            def _stability_mask(center_idx: int, upper_idx: int) -> np.ndarray:
+                # Symmetric window around center; near boundaries we shrink window and scale k proportionally.
+                left = max(0, center_idx - half)
+                right = min(upper_idx, center_idx + half)
+                win_len = right - left + 1
+                if win_len <= 0:
+                    return np.zeros((len(joint_names),), dtype=bool)
+                eff_k = int(np.ceil(stability_k * (float(win_len) / float(stability_n))))
+                eff_k = int(np.clip(eff_k, 1, win_len))
+                stack = np.stack(base_visible_by_frame[left : right + 1], axis=0)
+                return np.sum(stack, axis=0) >= eff_k
+
             while True:
                 ok, frame = cap.read()
                 if not ok:
                     break
                 if frame_idx < total_pose_frames:
-                    disp_per_joint = keypoints[frame_idx, :, 2]
+                    disp_per_joint = _predict_dispersion_scores_with_model(
+                        frame_idx=frame_idx,
+                        frame_bgr=frame,
+                        keypoints=keypoints,
+                        joint_names=joint_names,
+                        model_ctx=dispersion_model_ctx,
+                    )
                     visible_by_dispersion = (
                         np.isfinite(disp_per_joint)
                         & (disp_per_joint >= per_joint_disp_threshold)
                     )
                     draw_visible_mask = visible_mask[frame_idx] & visible_by_dispersion
-                    frame = _draw_pose(
-                        frame,
-                        smoothed[frame_idx],
-                        edges,
-                        draw_visible_mask,
-                        effective_conf[frame_idx],
-                        conf_thresh=float(runtime_cfg["draw_conf_thresh"]),
-                    )
-                writer.write(frame)
+                    base_visible_by_frame.append(draw_visible_mask.astype(bool))
+                    frame_buffer.append(frame.copy())
+
+                    while next_output_pose_idx <= frame_idx - half and frame_buffer:
+                        out_frame = frame_buffer.pop(0)
+                        stable_mask = _stability_mask(next_output_pose_idx, frame_idx)
+                        out_frame = _draw_pose(
+                            out_frame,
+                            smoothed[next_output_pose_idx],
+                            edges,
+                            stable_mask,
+                            effective_conf[next_output_pose_idx],
+                            conf_thresh=float(runtime_cfg["draw_conf_thresh"]),
+                        )
+                        writer.write(out_frame)
+                        next_output_pose_idx += 1
+                else:
+                    if frame_buffer:
+                        last_idx = len(base_visible_by_frame) - 1
+                        while next_output_pose_idx < total_pose_frames and frame_buffer:
+                            out_frame = frame_buffer.pop(0)
+                            stable_mask = _stability_mask(next_output_pose_idx, last_idx)
+                            out_frame = _draw_pose(
+                                out_frame,
+                                smoothed[next_output_pose_idx],
+                                edges,
+                                stable_mask,
+                                effective_conf[next_output_pose_idx],
+                                conf_thresh=float(runtime_cfg["draw_conf_thresh"]),
+                            )
+                            writer.write(out_frame)
+                            next_output_pose_idx += 1
+                    writer.write(frame)
                 frame_idx += 1
                 pbar.update(1)
+
+            # Flush tail pose frames with proportionally smaller temporal windows.
+            if total_pose_frames > 0 and frame_buffer:
+                last_idx = len(base_visible_by_frame) - 1
+                while next_output_pose_idx < total_pose_frames and frame_buffer:
+                    out_frame = frame_buffer.pop(0)
+                    stable_mask = _stability_mask(next_output_pose_idx, last_idx)
+                    out_frame = _draw_pose(
+                        out_frame,
+                        smoothed[next_output_pose_idx],
+                        edges,
+                        stable_mask,
+                        effective_conf[next_output_pose_idx],
+                        conf_thresh=float(runtime_cfg["draw_conf_thresh"]),
+                    )
+                    writer.write(out_frame)
+                    next_output_pose_idx += 1
 
         writer.release()
         cap.release()

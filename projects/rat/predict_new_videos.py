@@ -46,25 +46,30 @@ deeplabcut.create_labeled_video(
 )
 
 
-kalman_params, metrics = kalman_fitter(
+from modules.kalman import kalman_video
+from modules.kalman_fitter import kalman_fitter22  # 新增/替换
+
+kalman_params, metrics = kalman_fitter22(
     project_path,
     shuffle=shuffle,
     trainingsetindex=0,
     use_cached_predictions=True,
-    dispersion_visible_recall_target=0.95
+    dispersion_visible_recall_target=0.99,
+    test_fraction=0.2,
+    test_seed=42,
+    torch_device="cuda",  # 有GPU就用cuda；没有可改成"cpu"或去掉
 )
+
 kalman_video(
     config_path,
     videofile_path,
     shuffle=shuffle,
     destfolder=destfolder,
-    # max_extrapolation_frames =3,
-    # render_conf_min =0.3
-    render_conf_min_offset = -0.3,
-    # gate_threshold_offset = 16,
-    kalman_params = kalman_params
+    render_conf_min_offset=-0.1,
+    kalman_params=kalman_params,
+    stability_n=61,
+    stability_k=30,
 )
-
 
 
 from modules.inference_utils import generate_missing_label_heatmap

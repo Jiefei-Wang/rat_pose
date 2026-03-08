@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from collections import defaultdict
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -181,6 +182,8 @@ def _collect_fit_data(
     speed_by_joint: dict[str, list[float]] = defaultdict(list)
     labels_by_joint: dict[str, list[int]] = defaultdict(list)
     likelihood_by_joint: dict[str, list[float]] = defaultdict(list)
+    frame_by_joint: dict[str, list[float]] = defaultdict(list)
+    video_by_joint: dict[str, list[str]] = defaultdict(list)
     temporal_prev_by_joint: dict[str, list[float]] = defaultdict(list)
     temporal_next_by_joint: dict[str, list[float]] = defaultdict(list)
     frame_mean_by_joint: dict[str, list[float]] = defaultdict(list)
@@ -299,6 +302,8 @@ def _collect_fit_data(
                 rel_conf = _clip01(np.clip(pred_conf / np.maximum(frame_mean_conf, 1e-6), 0.0, 3.0) / 3.0)
                 labels_by_joint[joint_key].extend(gt_visible[cls_mask].astype(np.int32).tolist())
                 likelihood_by_joint[joint_key].extend(pred_conf[cls_mask].astype(np.float64).tolist())
+                frame_by_joint[joint_key].extend(frame_numbers[cls_mask].astype(np.float64).tolist())
+                video_by_joint[joint_key].extend([rec["stem"]] * int(np.count_nonzero(cls_mask)))
                 temporal_prev_by_joint[joint_key].extend(prev_conf[:, j][cls_mask].astype(np.float64).tolist())
                 temporal_next_by_joint[joint_key].extend(next_conf[:, j][cls_mask].astype(np.float64).tolist())
                 frame_mean_by_joint[joint_key].extend(frame_mean_conf[cls_mask].astype(np.float64).tolist())
@@ -336,6 +341,8 @@ def _collect_fit_data(
         "speed_by_joint": speed_by_joint,
         "labels_by_joint": labels_by_joint,
         "likelihood_by_joint": likelihood_by_joint,
+        "frame_by_joint": frame_by_joint,
+        "video_by_joint": video_by_joint,
         "prev_by_joint": temporal_prev_by_joint,
         "next_by_joint": temporal_next_by_joint,
         "frame_mean_by_joint": frame_mean_by_joint,
@@ -753,6 +760,7 @@ def _finalize_fit(
     scores_eval_by_joint: dict[str, np.ndarray] | None = None,
     labels_eval_by_joint: dict[str, np.ndarray] | None = None,
     cutoff_split: str = "test",
+    model_info: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, float]]:
     cfg = data["cfg"]
     speed_by_joint = data["speed_by_joint"]
@@ -873,6 +881,8 @@ def _finalize_fit(
         "global": global_defaults,
         "per_joint": per_joint,
     }
+    if model_info:
+        kalman_params["dispersion_model"] = dict(model_info)
     per_joint_out = per_joint_invisible_recall
     if labels_eval_by_joint is not None and scores_eval_by_joint is not None:
         per_joint_thresholds = {
@@ -1801,6 +1811,7 @@ def _collect_roi_context_samples(
     max_labeled_frames_per_video: int = 1500,
     use_cached_predictions: bool = True,
     roi_size: int = 128,
+    include_temporal_context: bool = False,
 ) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray]:
     project_root = Path(project_path).resolve()
     config_path = project_root / "config.yaml"
@@ -1916,17 +1927,33 @@ def _collect_roi_context_samples(
 
             xy_all = np.full((jcount, 2), np.nan, dtype=np.float32)
             conf_all = np.zeros((jcount,), dtype=np.float32)
+            conf_prev_all = np.zeros((jcount,), dtype=np.float32)
+            conf_next_all = np.zeros((jcount,), dtype=np.float32)
+            disp_prev_all = np.ones((jcount,), dtype=np.float32)
+            disp_next_all = np.ones((jcount,), dtype=np.float32)
             label_all = np.zeros((jcount,), dtype=np.float32)
+            prev_t = t - 1 if t > 0 and valid_rows[t - 1] else t
+            next_t = t + 1 if (t + 1) < len(image_paths) and valid_rows[t + 1] else t
             for j, jn in enumerate(joint_names):
                 key = jn.split("|")[-1]
                 if key not in joint_to_idx:
                     continue
                 idx = joint_to_idx[key]
                 x, y, c = pred_for_video[t, j]
+                xp, yp, cp = pred_for_video[prev_t, j]
+                xn, yn, cn = pred_for_video[next_t, j]
                 if np.isfinite(x) and np.isfinite(y):
                     xy_all[idx] = [x, y]
                 if np.isfinite(c):
                     conf_all[idx] = float(np.clip(c, 0.0, 1.0))
+                if np.isfinite(cp):
+                    conf_prev_all[idx] = float(np.clip(cp, 0.0, 1.0))
+                if np.isfinite(cn):
+                    conf_next_all[idx] = float(np.clip(cn, 0.0, 1.0))
+                if np.isfinite(x) and np.isfinite(y) and np.isfinite(xp) and np.isfinite(yp):
+                    disp_prev_all[idx] = float(np.hypot(x - xp, y - yp))
+                if np.isfinite(x) and np.isfinite(y) and np.isfinite(xn) and np.isfinite(yn):
+                    disp_next_all[idx] = float(np.hypot(x - xn, y - yn))
                 label_all[idx] = float(int(np.isfinite(gt_xy[t, j]).all()))
 
             good = np.isfinite(xy_all).all(axis=1)
@@ -1953,9 +1980,22 @@ def _collect_roi_context_samples(
 
             bw = max(1e-6, x1 - x0)
             bh = max(1e-6, y1 - y0)
+            norm = max(1e-6, float(np.hypot(bw, bh)))
             xrel = np.where(np.isfinite(xy_all[:, 0]), np.clip((xy_all[:, 0] - x0) / bw, 0.0, 1.0), 0.5)
             yrel = np.where(np.isfinite(xy_all[:, 1]), np.clip((xy_all[:, 1] - y0) / bh, 0.0, 1.0), 0.5)
-            meta = np.concatenate([xrel.astype(np.float32), yrel.astype(np.float32), conf_all.astype(np.float32)], axis=0)
+            meta_items = [xrel.astype(np.float32), yrel.astype(np.float32), conf_all.astype(np.float32)]
+            if include_temporal_context:
+                dp = np.clip(np.nan_to_num(disp_prev_all / norm, nan=1.0, posinf=1.0, neginf=1.0), 0.0, 1.5).astype(np.float32)
+                dn = np.clip(np.nan_to_num(disp_next_all / norm, nan=1.0, posinf=1.0, neginf=1.0), 0.0, 1.5).astype(np.float32)
+                meta_items.extend(
+                    [
+                        conf_prev_all.astype(np.float32),
+                        conf_next_all.astype(np.float32),
+                        dp,
+                        dn,
+                    ]
+                )
+            meta = np.concatenate(meta_items, axis=0)
 
             rois.append(roi)
             metas.append(meta)
@@ -2105,6 +2145,555 @@ def _fit_from_roi_context_cnn(
         labels_fit_by_joint[key] = label_arr[train_idx, j].astype(np.int32)
         per_joint_scores_eval[key] = probs_all[test_idx, j]
         labels_eval_by_joint[key] = label_arr[test_idx, j].astype(np.int32)
+
+    return _finalize_fit(
+        data=data,
+        per_joint_scores=per_joint_scores_fit,
+        project_path=project_path,
+        shuffle=shuffle,
+        trainingsetindex=trainingsetindex,
+        dispersion_visible_recall_target=dispersion_visible_recall_target,
+        score_model_name=score_model_name,
+        labels_fit_by_joint=labels_fit_by_joint,
+        scores_eval_by_joint=per_joint_scores_eval,
+        labels_eval_by_joint=labels_eval_by_joint,
+        cutoff_split="test",
+    )
+
+
+class _RoiJointContextBinaryCNN(nn.Module):
+    def __init__(
+        self,
+        roi_size: int,
+        meta_dim: int,
+        n_joints: int,
+        hidden_dim: int = 160,
+        dropout: float = 0.2,
+        use_query_map: bool = False,
+        query_sigma_frac: float = 0.08,
+    ):
+        super().__init__()
+        self.roi_size = int(roi_size)
+        self.use_query_map = bool(use_query_map)
+        in_ch = 2 if self.use_query_map else 1
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 96, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(96, 128, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1, 1)),
+        )
+        self.img_fc = nn.Sequential(
+            nn.Linear(128, int(hidden_dim)),
+            nn.ReLU(inplace=True),
+            nn.Dropout(float(np.clip(dropout, 0.0, 0.8))),
+        )
+        self.meta_fc = nn.Sequential(
+            nn.Linear(meta_dim, int(hidden_dim)),
+            nn.LayerNorm(int(hidden_dim)),
+            nn.ReLU(inplace=True),
+            nn.Dropout(float(np.clip(dropout, 0.0, 0.8))),
+        )
+        self.joint_emb = nn.Embedding(n_joints, 16)
+        self.head = nn.Sequential(
+            nn.Linear(int(hidden_dim) * 2 + 16 + 3, int(hidden_dim)),
+            nn.ReLU(inplace=True),
+            nn.Dropout(float(np.clip(dropout, 0.0, 0.8))),
+            nn.Linear(int(hidden_dim), 1),
+        )
+
+        if self.use_query_map:
+            gy, gx = torch.meshgrid(
+                torch.arange(self.roi_size, dtype=torch.float32),
+                torch.arange(self.roi_size, dtype=torch.float32),
+                indexing="ij",
+            )
+            self.register_buffer("grid_x", gx.unsqueeze(0), persistent=False)
+            self.register_buffer("grid_y", gy.unsqueeze(0), persistent=False)
+            sigma = max(1.0, float(self.roi_size) * float(np.clip(query_sigma_frac, 0.02, 0.25)))
+            self.query_sigma2 = float(sigma * sigma)
+        else:
+            self.register_buffer("grid_x", torch.zeros(1, 1, 1), persistent=False)
+            self.register_buffer("grid_y", torch.zeros(1, 1, 1), persistent=False)
+            self.query_sigma2 = 1.0
+
+    def _query_heatmap(self, query: torch.Tensor) -> torch.Tensor:
+        qx = torch.clamp(query[:, 1], 0.0, 1.0) * float(self.roi_size - 1)
+        qy = torch.clamp(query[:, 2], 0.0, 1.0) * float(self.roi_size - 1)
+        dx = self.grid_x - qx[:, None, None]
+        dy = self.grid_y - qy[:, None, None]
+        return torch.exp(-(dx * dx + dy * dy) / (2.0 * self.query_sigma2))
+
+    def forward(
+        self,
+        roi: torch.Tensor,
+        meta: torch.Tensor,
+        joint_id: torch.Tensor,
+        query: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.use_query_map:
+            qmap = self._query_heatmap(query).unsqueeze(1)
+            roi = torch.cat([roi, qmap], dim=1)
+        x = self.conv(roi).flatten(1)
+        x = self.img_fc(x)
+        m = self.meta_fc(meta)
+        j = self.joint_emb(joint_id)
+        z = torch.cat([x, m, j, query], dim=1)
+        return self.head(z).squeeze(1)
+
+
+def _fit_from_roi_joint_context_cnn(
+    project_path: str | Path,
+    shuffle: int,
+    score_model_name: str,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    max_labeled_frames_per_video: int = 1500,
+    max_speed_samples_per_joint: int = 30000,
+    use_cached_predictions: bool = True,
+    dispersion_visible_recall_target: float = 0.95,
+    test_fraction: float = 0.2,
+    test_size: int | None = None,
+    test_seed: int = 42,
+    roi_size: int = 160,
+    epochs: int = 30,
+    batch_size: int = 192,
+    learning_rate: float = 4e-4,
+    weight_decay: float = 1e-4,
+    dropout: float = 0.2,
+    hidden_dim: int = 160,
+    use_query_map: bool = False,
+    query_sigma_frac: float = 0.08,
+    focal_gamma: float = 0.0,
+    include_temporal_context: bool = False,
+    torch_device: str | None = None,
+) -> tuple[dict[str, Any], dict[str, float]]:
+    if torch is None or nn is None or F is None:
+        raise ImportError("PyTorch is required for ROI joint-context CNN.")
+
+    data = _collect_fit_data(
+        project_path=project_path,
+        shuffle=shuffle,
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        max_speed_samples_per_joint=max_speed_samples_per_joint,
+        use_cached_predictions=use_cached_predictions,
+    )
+    joint_names, roi_arr, meta_arr, label_arr = _collect_roi_context_samples(
+        project_path=project_path,
+        shuffle=shuffle,
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        use_cached_predictions=use_cached_predictions,
+        roi_size=roi_size,
+        include_temporal_context=include_temporal_context,
+    )
+    n_frames = int(roi_arr.shape[0])
+    n_joints = int(label_arr.shape[1])
+    train_frames, test_frames = _build_frame_split(
+        n_samples=n_frames,
+        test_fraction=test_fraction,
+        test_size=test_size,
+        test_seed=test_seed,
+    )
+
+    meta_arr = np.asarray(meta_arr, dtype=np.float32)
+    label_arr = np.asarray(label_arr, dtype=np.float32)
+    xrel_arr = np.asarray(meta_arr[:, :n_joints], dtype=np.float32)
+    yrel_arr = np.asarray(meta_arr[:, n_joints : 2 * n_joints], dtype=np.float32)
+    conf_arr = np.asarray(meta_arr[:, 2 * n_joints : 3 * n_joints], dtype=np.float32)
+
+    def _build_split_arrays(frame_idx: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        if frame_idx.size == 0:
+            return (
+                np.empty((0, 1, roi_size, roi_size), dtype=np.float32),
+                np.empty((0, meta_arr.shape[1]), dtype=np.float32),
+                np.empty((0,), dtype=np.int64),
+                np.empty((0, 3), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+            )
+        r_list: list[np.ndarray] = []
+        m_list: list[np.ndarray] = []
+        j_list: list[np.ndarray] = []
+        q_list: list[np.ndarray] = []
+        y_list: list[np.ndarray] = []
+        for j in range(n_joints):
+            fi = frame_idx
+            r_list.append(roi_arr[fi].astype(np.float32))
+            m_list.append(meta_arr[fi].astype(np.float32))
+            j_list.append(np.full(fi.size, j, dtype=np.int64))
+            q_list.append(
+                np.column_stack(
+                    [
+                        conf_arr[fi, j].astype(np.float32),
+                        xrel_arr[fi, j].astype(np.float32),
+                        yrel_arr[fi, j].astype(np.float32),
+                    ]
+                ).astype(np.float32)
+            )
+            y_list.append(label_arr[fi, j].astype(np.float32))
+        return (
+            np.concatenate(r_list, axis=0)[:, None, :, :],
+            np.concatenate(m_list, axis=0),
+            np.concatenate(j_list, axis=0),
+            np.concatenate(q_list, axis=0),
+            np.concatenate(y_list, axis=0),
+        )
+
+    torch.manual_seed(int(test_seed))
+    np.random.seed(int(test_seed))
+    r_train, m_train, j_train, q_train, y_train = _build_split_arrays(train_frames)
+    if y_train.size == 0:
+        raise ValueError("No training samples for ROI joint-context CNN.")
+
+    project_root = Path(project_path).resolve()
+    model_cache_dir = project_root / ".kalman_fit_cache" / f"shuffle{shuffle}" / "dispersion_models"
+    model_cache_dir.mkdir(parents=True, exist_ok=True)
+    model_tag = (
+        f"{score_model_name}_ts{int(test_seed)}_roi{int(roi_size)}_hd{int(hidden_dim)}"
+        f"_uq{int(bool(use_query_map))}_tc{int(bool(include_temporal_context))}"
+    )
+    model_path = model_cache_dir / f"{model_tag}.jit.pt"
+    meta_path = model_cache_dir / f"{model_tag}.meta.json"
+    device = _resolve_torch_device(torch_device)
+    model: Any
+
+    use_cached_model = bool(use_cached_predictions and model_path.exists() and meta_path.exists())
+    if use_cached_model:
+        model = torch.jit.load(str(model_path), map_location=device)
+        model = model.to(device)
+        model.eval()
+    else:
+        dataset = TensorDataset(
+            torch.from_numpy(r_train),
+            torch.from_numpy(m_train),
+            torch.from_numpy(j_train),
+            torch.from_numpy(q_train),
+            torch.from_numpy(y_train),
+        )
+        loader = DataLoader(
+            dataset,
+            batch_size=int(max(16, batch_size)),
+            shuffle=True,
+            num_workers=0,
+            pin_memory=bool(device and device.type == "cuda"),
+        )
+        model = _RoiJointContextBinaryCNN(
+            roi_size=roi_size,
+            meta_dim=meta_arr.shape[1],
+            n_joints=n_joints,
+            hidden_dim=hidden_dim,
+            dropout=dropout,
+            use_query_map=use_query_map,
+            query_sigma_frac=query_sigma_frac,
+        ).to(device)
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=float(learning_rate),
+            weight_decay=float(max(0.0, weight_decay)),
+        )
+        pos = float(np.sum(y_train >= 0.5))
+        neg = float(np.sum(y_train < 0.5))
+        pos_weight = torch.tensor([max(1e-6, neg / max(pos, 1e-6))], dtype=torch.float32, device=device)
+
+        model.train()
+        gamma = float(max(0.0, focal_gamma))
+        for _ in range(int(max(1, epochs))):
+            for rb, mb, jb, qb, yb in loader:
+                rb = rb.to(device, non_blocking=True)
+                mb = mb.to(device, non_blocking=True)
+                jb = jb.to(device, non_blocking=True)
+                qb = qb.to(device, non_blocking=True)
+                yb = yb.to(device, non_blocking=True)
+                optimizer.zero_grad(set_to_none=True)
+                logits = model(rb, mb, jb, qb)
+                loss_vec = F.binary_cross_entropy_with_logits(logits, yb, pos_weight=pos_weight, reduction="none")
+                if gamma > 1e-6:
+                    p = torch.sigmoid(logits)
+                    pt = torch.where(yb > 0.5, p, 1.0 - p)
+                    loss_vec = loss_vec * torch.pow(1.0 - pt, gamma)
+                loss = loss_vec.mean()
+                loss.backward()
+                optimizer.step()
+        model.eval()
+
+        example_roi = torch.zeros((1, 1, roi_size, roi_size), dtype=torch.float32, device=device)
+        example_meta = torch.zeros((1, meta_arr.shape[1]), dtype=torch.float32, device=device)
+        example_joint = torch.zeros((1,), dtype=torch.long, device=device)
+        example_query = torch.zeros((1, 3), dtype=torch.float32, device=device)
+        scripted = torch.jit.trace(model, (example_roi, example_meta, example_joint, example_query))
+        scripted.save(str(model_path))
+
+        metadata = {
+            "model_type": "roi_joint_context_binary_cnn_jit_v1",
+            "score_model_name": str(score_model_name),
+            "joint_names": [str(x) for x in joint_names],
+            "roi_size": int(roi_size),
+            "meta_dim": int(meta_arr.shape[1]),
+            "n_joints": int(n_joints),
+            "use_query_map": bool(use_query_map),
+            "query_sigma_frac": float(query_sigma_frac),
+            "include_temporal_context": bool(include_temporal_context),
+            "hidden_dim": int(hidden_dim),
+            "dropout": float(dropout),
+            "test_seed": int(test_seed),
+        }
+        meta_path.write_text(json.dumps(metadata, ensure_ascii=True, indent=2), encoding="utf-8")
+        model = torch.jit.load(str(model_path), map_location=device)
+        model = model.to(device)
+        model.eval()
+
+    def _predict_for_joint(frame_idx: np.ndarray, joint_idx: int) -> tuple[np.ndarray, np.ndarray]:
+        if frame_idx.size == 0:
+            return np.array([], dtype=np.float64), np.array([], dtype=np.int32)
+        q = np.column_stack(
+            [
+                conf_arr[frame_idx, joint_idx].astype(np.float32),
+                xrel_arr[frame_idx, joint_idx].astype(np.float32),
+                yrel_arr[frame_idx, joint_idx].astype(np.float32),
+            ]
+        ).astype(np.float32)
+        with torch.no_grad():
+            logits = model(
+                torch.from_numpy(roi_arr[frame_idx][:, None, :, :].astype(np.float32)).to(device, non_blocking=True),
+                torch.from_numpy(meta_arr[frame_idx].astype(np.float32)).to(device, non_blocking=True),
+                torch.full((frame_idx.size,), joint_idx, dtype=torch.long, device=device),
+                torch.from_numpy(q).to(device, non_blocking=True),
+            )
+            probs = torch.sigmoid(logits).cpu().numpy().astype(np.float64)
+        labels = label_arr[frame_idx, joint_idx].astype(np.int32)
+        return probs, labels
+
+    model.eval()
+    per_joint_scores_fit: dict[str, np.ndarray] = {}
+    labels_fit_by_joint: dict[str, np.ndarray] = {}
+    per_joint_scores_eval: dict[str, np.ndarray] = {}
+    labels_eval_by_joint: dict[str, np.ndarray] = {}
+    for j, key in enumerate(joint_names):
+        p_fit, y_fit = _predict_for_joint(train_frames, j)
+        p_eval, y_eval = _predict_for_joint(test_frames, j)
+        per_joint_scores_fit[key] = p_fit
+        labels_fit_by_joint[key] = y_fit
+        per_joint_scores_eval[key] = p_eval
+        labels_eval_by_joint[key] = y_eval
+
+    return _finalize_fit(
+        data=data,
+        per_joint_scores=per_joint_scores_fit,
+        project_path=project_path,
+        shuffle=shuffle,
+        trainingsetindex=trainingsetindex,
+        dispersion_visible_recall_target=dispersion_visible_recall_target,
+        score_model_name=score_model_name,
+        labels_fit_by_joint=labels_fit_by_joint,
+        scores_eval_by_joint=per_joint_scores_eval,
+        labels_eval_by_joint=labels_eval_by_joint,
+        cutoff_split="test",
+        model_info={
+            "model_type": "roi_joint_context_binary_cnn_jit_v1",
+            "model_path": str(model_path.resolve()),
+            "meta_path": str(meta_path.resolve()),
+        },
+    )
+
+
+def _binary_log_loss(y_true: np.ndarray, prob: np.ndarray) -> float:
+    y = np.asarray(y_true, dtype=np.float64)
+    p = np.asarray(prob, dtype=np.float64)
+    n = min(y.size, p.size)
+    if n == 0:
+        return float("inf")
+    y = y[:n]
+    p = np.clip(p[:n], 1e-6, 1.0 - 1e-6)
+    return float(-np.mean(y * np.log(p) + (1.0 - y) * np.log(1.0 - p)))
+
+
+def _fit_from_temporal_knn(
+    project_path: str | Path,
+    shuffle: int,
+    score_model_name: str,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    max_labeled_frames_per_video: int = 1500,
+    max_speed_samples_per_joint: int = 30000,
+    use_cached_predictions: bool = True,
+    dispersion_visible_recall_target: float = 0.95,
+    test_fraction: float = 0.2,
+    test_size: int | None = None,
+    test_seed: int = 42,
+    neighbor_grid: tuple[int, ...] = (9, 17, 33, 65),
+    frame_weight_grid: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0),
+    video_weight_grid: tuple[float, ...] = (2.0, 4.0, 8.0),
+) -> tuple[dict[str, Any], dict[str, float]]:
+    if KNeighborsClassifier is None:
+        raise ImportError("scikit-learn is required for temporal KNN fitter.")
+
+    data = _collect_fit_data(
+        project_path=project_path,
+        shuffle=shuffle,
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        max_speed_samples_per_joint=max_speed_samples_per_joint,
+        use_cached_predictions=use_cached_predictions,
+    )
+
+    cfg = data["cfg"]
+    bodyparts = [str(bp) for bp in cfg.get("bodyparts", [])]
+    fitted_joint_names = bodyparts if bodyparts else sorted(data["total_by_joint"].keys())
+    split = _build_joint_split(
+        labels_by_joint=data["labels_by_joint"],
+        joint_keys=fitted_joint_names,
+        test_fraction=test_fraction,
+        test_size=test_size,
+        test_seed=test_seed,
+    )
+
+    per_joint_scores_fit: dict[str, np.ndarray] = {}
+    labels_fit_by_joint: dict[str, np.ndarray] = {}
+    per_joint_scores_eval: dict[str, np.ndarray] = {}
+    labels_eval_by_joint: dict[str, np.ndarray] = {}
+
+    for jidx, joint_key in enumerate(fitted_joint_names):
+        raw = _joint_raw_arrays(data, joint_key)
+        x_base = _build_joint_features(raw).astype(np.float64)
+        y = np.asarray(data["labels_by_joint"].get(joint_key, []), dtype=np.int32)
+        frame = np.asarray(data["frame_by_joint"].get(joint_key, []), dtype=np.float64)
+        video = np.asarray(data["video_by_joint"].get(joint_key, []), dtype=object)
+
+        n = min(x_base.shape[0], y.size, frame.size, video.size)
+        x_base = x_base[:n]
+        y = y[:n]
+        frame = frame[:n]
+        video = video[:n]
+        if n == 0:
+            per_joint_scores_fit[joint_key] = np.array([], dtype=np.float64)
+            labels_fit_by_joint[joint_key] = np.array([], dtype=np.int32)
+            per_joint_scores_eval[joint_key] = np.array([], dtype=np.float64)
+            labels_eval_by_joint[joint_key] = np.array([], dtype=np.int32)
+            continue
+
+        train_idx, test_idx = split.get(joint_key, (np.arange(n, dtype=np.int64), np.array([], dtype=np.int64)))
+        train_idx = train_idx[train_idx < n]
+        test_idx = test_idx[test_idx < n]
+        if train_idx.size == 0:
+            train_idx = np.arange(n, dtype=np.int64)
+            test_idx = np.array([], dtype=np.int64)
+
+        labels_fit_by_joint[joint_key] = y[train_idx]
+        labels_eval_by_joint[joint_key] = y[test_idx]
+        if np.unique(y[train_idx]).size < 2:
+            const = float(y[train_idx][0]) if train_idx.size else 1.0
+            per_joint_scores_fit[joint_key] = np.full(train_idx.size, const, dtype=np.float64)
+            per_joint_scores_eval[joint_key] = np.full(test_idx.size, const, dtype=np.float64)
+            continue
+
+        frame_center = float(np.nanmedian(frame[train_idx])) if train_idx.size else 0.0
+        frame_scale = float(np.nanstd(frame[train_idx])) if train_idx.size else 1.0
+        if not np.isfinite(frame_scale) or frame_scale < 1e-6:
+            frame_scale = 1.0
+        frame_z = ((frame - frame_center) / frame_scale).reshape(-1, 1)
+
+        uniq_video = sorted(set(str(v) for v in video.tolist()))
+        vmap = {v: i for i, v in enumerate(uniq_video)}
+        video_onehot = np.zeros((n, len(uniq_video)), dtype=np.float64)
+        for i, v in enumerate(video.tolist()):
+            video_onehot[i, vmap[str(v)]] = 1.0
+
+        rng = np.random.default_rng(int(test_seed) + 17 * (jidx + 1))
+        train_y = y[train_idx]
+        cls0 = train_idx[train_y == 0]
+        cls1 = train_idx[train_y == 1]
+        n_val = int(np.clip(round(train_idx.size * 0.2), 1, max(1, train_idx.size - 1)))
+        if cls0.size > 0 and cls1.size > 0 and n_val >= 2:
+            n0 = int(np.clip(round(n_val * (cls0.size / train_idx.size)), 1, max(1, cls0.size - 1)))
+            n1 = int(np.clip(n_val - n0, 1, max(1, cls1.size - 1)))
+            val_idx = np.unique(
+                np.concatenate(
+                    [
+                        rng.choice(cls0, size=n0, replace=False),
+                        rng.choice(cls1, size=n1, replace=False),
+                    ]
+                ).astype(np.int64)
+            )
+        else:
+            val_idx = rng.choice(train_idx, size=n_val, replace=False).astype(np.int64)
+        inner_mask = np.ones(train_idx.size, dtype=bool)
+        pos_lookup = {idx: p for p, idx in enumerate(train_idx.tolist())}
+        for idx in val_idx.tolist():
+            p = pos_lookup.get(int(idx))
+            if p is not None:
+                inner_mask[p] = False
+        inner_train_idx = train_idx[inner_mask]
+        if inner_train_idx.size == 0:
+            inner_train_idx = train_idx
+            val_idx = train_idx
+
+        best_loss = float("inf")
+        best_cfg = (neighbor_grid[0], frame_weight_grid[0], video_weight_grid[0])
+        for fw in frame_weight_grid:
+            for vw in video_weight_grid:
+                x_combo = np.concatenate([x_base, frame_z * float(fw), video_onehot * float(vw)], axis=1)
+                for kk in neighbor_grid:
+                    k_eff = int(np.clip(int(kk), 1, inner_train_idx.size))
+                    model = KNeighborsClassifier(
+                        n_neighbors=k_eff,
+                        weights="distance",
+                        metric="minkowski",
+                        p=2,
+                    )
+                    model.fit(x_combo[inner_train_idx], y[inner_train_idx])
+                    prob = model.predict_proba(x_combo[val_idx])
+                    if prob.shape[1] == 2:
+                        p1 = prob[:, 1]
+                    else:
+                        cls = int(model.classes_[0])
+                        p1 = prob[:, 0] if cls == 1 else np.zeros(prob.shape[0], dtype=np.float64)
+                    loss = _binary_log_loss(y[val_idx], p1)
+                    if loss < best_loss:
+                        best_loss = loss
+                        best_cfg = (k_eff, float(fw), float(vw))
+
+        best_k, best_fw, best_vw = best_cfg
+        x_best = np.concatenate([x_base, frame_z * best_fw, video_onehot * best_vw], axis=1)
+        final_model = KNeighborsClassifier(
+            n_neighbors=int(np.clip(best_k, 1, train_idx.size)),
+            weights="distance",
+            metric="minkowski",
+            p=2,
+        )
+        final_model.fit(x_best[train_idx], y[train_idx])
+        fit_prob = final_model.predict_proba(x_best[train_idx])
+        eval_prob = final_model.predict_proba(x_best[test_idx]) if test_idx.size else np.empty((0, 2), dtype=np.float64)
+
+        if fit_prob.shape[1] == 2:
+            per_joint_scores_fit[joint_key] = fit_prob[:, 1].astype(np.float64)
+        else:
+            cls = int(final_model.classes_[0])
+            per_joint_scores_fit[joint_key] = (
+                fit_prob[:, 0].astype(np.float64) if cls == 1 else np.zeros(fit_prob.shape[0], dtype=np.float64)
+            )
+        if eval_prob.shape[0] == 0:
+            per_joint_scores_eval[joint_key] = np.array([], dtype=np.float64)
+        elif eval_prob.shape[1] == 2:
+            per_joint_scores_eval[joint_key] = eval_prob[:, 1].astype(np.float64)
+        else:
+            cls = int(final_model.classes_[0])
+            per_joint_scores_eval[joint_key] = (
+                eval_prob[:, 0].astype(np.float64) if cls == 1 else np.zeros(eval_prob.shape[0], dtype=np.float64)
+            )
 
     return _finalize_fit(
         data=data,
@@ -2783,7 +3372,8 @@ def kalman_fitter16(
     )
 
 
-# TODO: update metrics after test.
+# 2026-03-08 holdout test (projects/rat, shuffle=3, target=0.95, test_fraction=0.2, seed=42):
+# test global invis=0.4401, test global vis=0.9524, mean joint invis=0.4482, joints>=0.8=0/19.
 def kalman_fitter17(
     project_path: str | Path,
     shuffle: int,
@@ -2823,7 +3413,8 @@ def kalman_fitter17(
     )
 
 
-# TODO: update metrics after test.
+# 2026-03-08 holdout test (projects/rat, shuffle=3, target=0.95, test_fraction=0.2, seed=42):
+# test global invis=0.4662, test global vis=0.9524, mean joint invis=0.4653, joints>=0.8=0/19.
 def kalman_fitter18(
     project_path: str | Path,
     shuffle: int,
@@ -2860,4 +3451,298 @@ def kalman_fitter18(
         batch_size=cnn_batch_size,
         learning_rate=cnn_learning_rate,
         torch_device=torch_device,
+    )
+
+
+# 2026-03-08 holdout test (projects/rat, shuffle=3, target=0.95, test_fraction=0.2, seed=42):
+# test global invis=0.4800, test global vis=0.9524, mean joint invis=0.5530, joints>=0.8=0/19.
+def kalman_fitter19(
+    project_path: str | Path,
+    shuffle: int,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    max_labeled_frames_per_video: int = 1500,
+    max_speed_samples_per_joint: int = 30000,
+    use_cached_predictions: bool = True,
+    dispersion_visible_recall_target: float = 0.95,
+    test_fraction: float = 0.2,
+    test_size: int | None = None,
+    test_seed: int = 42,
+    roi_size: int = 160,
+    cnn_epochs: int = 36,
+    cnn_batch_size: int = 192,
+    cnn_learning_rate: float = 4e-4,
+    cnn_weight_decay: float = 1e-4,
+    cnn_dropout: float = 0.2,
+    cnn_hidden_dim: int = 192,
+    torch_device: str | None = None,
+) -> tuple[dict[str, Any], dict[str, float]]:
+    return _fit_from_roi_joint_context_cnn(
+        project_path=project_path,
+        shuffle=shuffle,
+        score_model_name="roi_joint_context_binary_cnn_v1",
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        max_speed_samples_per_joint=max_speed_samples_per_joint,
+        use_cached_predictions=use_cached_predictions,
+        dispersion_visible_recall_target=dispersion_visible_recall_target,
+        test_fraction=test_fraction,
+        test_size=test_size,
+        test_seed=test_seed,
+        roi_size=roi_size,
+        epochs=cnn_epochs,
+        batch_size=cnn_batch_size,
+        learning_rate=cnn_learning_rate,
+        weight_decay=cnn_weight_decay,
+        dropout=cnn_dropout,
+        hidden_dim=cnn_hidden_dim,
+        use_query_map=False,
+        query_sigma_frac=0.08,
+        focal_gamma=0.0,
+        torch_device=torch_device,
+    )
+
+
+# 2026-03-08 holdout test (projects/rat, shuffle=3, target=0.95, test_fraction=0.2, seed=42):
+# test global invis=0.5130, test global vis=0.9524, mean joint invis=0.5843, joints>=0.8=2/19.
+def kalman_fitter20(
+    project_path: str | Path,
+    shuffle: int,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    max_labeled_frames_per_video: int = 1500,
+    max_speed_samples_per_joint: int = 30000,
+    use_cached_predictions: bool = True,
+    dispersion_visible_recall_target: float = 0.95,
+    test_fraction: float = 0.2,
+    test_size: int | None = None,
+    test_seed: int = 42,
+    roi_size: int = 192,
+    cnn_epochs: int = 44,
+    cnn_batch_size: int = 160,
+    cnn_learning_rate: float = 3.5e-4,
+    cnn_weight_decay: float = 1.2e-4,
+    cnn_dropout: float = 0.24,
+    cnn_hidden_dim: int = 224,
+    query_sigma_frac: float = 0.07,
+    torch_device: str | None = None,
+) -> tuple[dict[str, Any], dict[str, float]]:
+    return _fit_from_roi_joint_context_cnn(
+        project_path=project_path,
+        shuffle=shuffle,
+        score_model_name="roi_joint_context_binary_cnn_v2_querymap",
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        max_speed_samples_per_joint=max_speed_samples_per_joint,
+        use_cached_predictions=use_cached_predictions,
+        dispersion_visible_recall_target=dispersion_visible_recall_target,
+        test_fraction=test_fraction,
+        test_size=test_size,
+        test_seed=test_seed,
+        roi_size=roi_size,
+        epochs=cnn_epochs,
+        batch_size=cnn_batch_size,
+        learning_rate=cnn_learning_rate,
+        weight_decay=cnn_weight_decay,
+        dropout=cnn_dropout,
+        hidden_dim=cnn_hidden_dim,
+        use_query_map=True,
+        query_sigma_frac=query_sigma_frac,
+        focal_gamma=0.0,
+        torch_device=torch_device,
+    )
+
+
+# 2026-03-08 holdout test (projects/rat, shuffle=3, target=0.95, test_fraction=0.2, seed=42):
+# test global invis=0.5349, test global vis=0.9524, mean joint invis=0.5996, joints>=0.8=1/19.
+def kalman_fitter21(
+    project_path: str | Path,
+    shuffle: int,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    max_labeled_frames_per_video: int = 1500,
+    max_speed_samples_per_joint: int = 30000,
+    use_cached_predictions: bool = True,
+    dispersion_visible_recall_target: float = 0.95,
+    test_fraction: float = 0.2,
+    test_size: int | None = None,
+    test_seed: int = 42,
+    roi_size: int = 192,
+    cnn_epochs: int = 56,
+    cnn_batch_size: int = 144,
+    cnn_learning_rate: float = 3e-4,
+    cnn_weight_decay: float = 1.5e-4,
+    cnn_dropout: float = 0.28,
+    cnn_hidden_dim: int = 256,
+    query_sigma_frac: float = 0.065,
+    focal_gamma: float = 1.5,
+    torch_device: str | None = None,
+) -> tuple[dict[str, Any], dict[str, float]]:
+    return _fit_from_roi_joint_context_cnn(
+        project_path=project_path,
+        shuffle=shuffle,
+        score_model_name="roi_joint_context_binary_cnn_v3_querymap_focal",
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        max_speed_samples_per_joint=max_speed_samples_per_joint,
+        use_cached_predictions=use_cached_predictions,
+        dispersion_visible_recall_target=dispersion_visible_recall_target,
+        test_fraction=test_fraction,
+        test_size=test_size,
+        test_seed=test_seed,
+        roi_size=roi_size,
+        epochs=cnn_epochs,
+        batch_size=cnn_batch_size,
+        learning_rate=cnn_learning_rate,
+        weight_decay=cnn_weight_decay,
+        dropout=cnn_dropout,
+        hidden_dim=cnn_hidden_dim,
+        use_query_map=True,
+        query_sigma_frac=query_sigma_frac,
+        focal_gamma=focal_gamma,
+        include_temporal_context=False,
+        torch_device=torch_device,
+    )
+
+
+# 2026-03-08 holdout test (projects/rat, shuffle=3, target=0.95, test_fraction=0.2, seed=42):
+# test global invis=0.5450, test global vis=0.9524, mean joint invis=0.5926, joints>=0.8=2/19.
+def kalman_fitter22(
+    project_path: str | Path,
+    shuffle: int,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    max_labeled_frames_per_video: int = 1500,
+    max_speed_samples_per_joint: int = 30000,
+    use_cached_predictions: bool = True,
+    dispersion_visible_recall_target: float = 0.95,
+    test_fraction: float = 0.2,
+    test_size: int | None = None,
+    test_seed: int = 42,
+    roi_size: int = 192,
+    cnn_epochs: int = 72,
+    cnn_batch_size: int = 144,
+    cnn_learning_rate: float = 2.5e-4,
+    cnn_weight_decay: float = 1.8e-4,
+    cnn_dropout: float = 0.30,
+    cnn_hidden_dim: int = 288,
+    query_sigma_frac: float = 0.06,
+    focal_gamma: float = 1.8,
+    torch_device: str | None = None,
+) -> tuple[dict[str, Any], dict[str, float]]:
+    return _fit_from_roi_joint_context_cnn(
+        project_path=project_path,
+        shuffle=shuffle,
+        score_model_name="roi_joint_context_binary_cnn_v4_temporal",
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        max_speed_samples_per_joint=max_speed_samples_per_joint,
+        use_cached_predictions=use_cached_predictions,
+        dispersion_visible_recall_target=dispersion_visible_recall_target,
+        test_fraction=test_fraction,
+        test_size=test_size,
+        test_seed=test_seed,
+        roi_size=roi_size,
+        epochs=cnn_epochs,
+        batch_size=cnn_batch_size,
+        learning_rate=cnn_learning_rate,
+        weight_decay=cnn_weight_decay,
+        dropout=cnn_dropout,
+        hidden_dim=cnn_hidden_dim,
+        use_query_map=True,
+        query_sigma_frac=query_sigma_frac,
+        focal_gamma=focal_gamma,
+        include_temporal_context=True,
+        torch_device=torch_device,
+    )
+
+
+# 2026-03-08 holdout test (projects/rat, shuffle=3, target=0.95, test_fraction=0.2, seed=42):
+# test global invis=0.4204, test global vis=0.9524, mean joint invis=0.5269, joints>=0.8=1/19.
+def kalman_fitter23(
+    project_path: str | Path,
+    shuffle: int,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    max_labeled_frames_per_video: int = 1500,
+    max_speed_samples_per_joint: int = 30000,
+    use_cached_predictions: bool = True,
+    dispersion_visible_recall_target: float = 0.95,
+    test_fraction: float = 0.2,
+    test_size: int | None = None,
+    test_seed: int = 42,
+    roi_size: int = 224,
+    cnn_epochs: int = 80,
+    cnn_batch_size: int = 120,
+    cnn_learning_rate: float = 2.2e-4,
+    cnn_weight_decay: float = 2.0e-4,
+    cnn_dropout: float = 0.32,
+    cnn_hidden_dim: int = 320,
+    query_sigma_frac: float = 0.055,
+    focal_gamma: float = 2.2,
+    torch_device: str | None = None,
+) -> tuple[dict[str, Any], dict[str, float]]:
+    return _fit_from_roi_joint_context_cnn(
+        project_path=project_path,
+        shuffle=shuffle,
+        score_model_name="roi_joint_context_binary_cnn_v5_temporal_large",
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        max_speed_samples_per_joint=max_speed_samples_per_joint,
+        use_cached_predictions=use_cached_predictions,
+        dispersion_visible_recall_target=dispersion_visible_recall_target,
+        test_fraction=test_fraction,
+        test_size=test_size,
+        test_seed=test_seed,
+        roi_size=roi_size,
+        epochs=cnn_epochs,
+        batch_size=cnn_batch_size,
+        learning_rate=cnn_learning_rate,
+        weight_decay=cnn_weight_decay,
+        dropout=cnn_dropout,
+        hidden_dim=cnn_hidden_dim,
+        use_query_map=True,
+        query_sigma_frac=query_sigma_frac,
+        focal_gamma=focal_gamma,
+        include_temporal_context=True,
+        torch_device=torch_device,
+    )
+
+
+# 2026-03-08 holdout test (projects/rat, shuffle=3, target=0.95, test_fraction=0.2, seed=42):
+# test global invis=0.2776, test global vis=0.9537, mean joint invis=0.3407, joints>=0.8=0/19.
+def kalman_fitter24(
+    project_path: str | Path,
+    shuffle: int,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    max_labeled_frames_per_video: int = 1500,
+    max_speed_samples_per_joint: int = 30000,
+    use_cached_predictions: bool = True,
+    dispersion_visible_recall_target: float = 0.95,
+    test_fraction: float = 0.2,
+    test_size: int | None = None,
+    test_seed: int = 42,
+) -> tuple[dict[str, Any], dict[str, float]]:
+    return _fit_from_temporal_knn(
+        project_path=project_path,
+        shuffle=shuffle,
+        score_model_name="temporal_knn_context_v1",
+        trainingsetindex=trainingsetindex,
+        modelprefix=modelprefix,
+        max_labeled_frames_per_video=max_labeled_frames_per_video,
+        max_speed_samples_per_joint=max_speed_samples_per_joint,
+        use_cached_predictions=use_cached_predictions,
+        dispersion_visible_recall_target=dispersion_visible_recall_target,
+        test_fraction=test_fraction,
+        test_size=test_size,
+        test_seed=test_seed,
+        neighbor_grid=(9, 17, 33, 65),
+        frame_weight_grid=(0.5, 1.0, 2.0, 4.0),
+        video_weight_grid=(2.0, 4.0, 8.0),
     )
