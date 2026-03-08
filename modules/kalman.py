@@ -642,6 +642,91 @@ def _append_capped_samples(dst: list[float], samples: np.ndarray, cap: int) -> N
     dst.extend(samples.astype(np.float64).tolist())
 
 
+def _dump_dict_list_cache(d: dict[str, list[float | int]]) -> np.ndarray:
+    items = [(str(k), np.asarray(v)) for k, v in d.items()]
+    return np.array(items, dtype=object)
+
+
+def _load_dict_list_cache(arr: np.ndarray, value_dtype: np.dtype) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for item in arr.tolist():
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        k = str(item[0])
+        v = np.asarray(item[1], dtype=value_dtype).tolist()
+        out[k] = v
+    return out
+
+
+def _dump_dict_scalar_cache(d: dict[str, int]) -> np.ndarray:
+    items = [(str(k), int(v)) for k, v in d.items()]
+    return np.array(items, dtype=object)
+
+
+def _load_dict_scalar_cache(arr: np.ndarray) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for item in arr.tolist():
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        out[str(item[0])] = int(item[1])
+    return out
+
+
+def _fit_dispersion_threshold(
+    visibility_labels: np.ndarray,
+    dispersion_scores: np.ndarray,
+    visible_recall_target: float = 0.95,
+) -> tuple[float, float, float]:
+    labels = np.asarray(visibility_labels, dtype=np.int32)
+    scores = np.asarray(dispersion_scores, dtype=np.float64)
+    valid = np.isfinite(scores)
+    labels = labels[valid]
+    scores = scores[valid]
+    if labels.size == 0:
+        return 0.0, 0.0, 0.0
+
+    vis_total = float(np.sum(labels == 1))
+    invis_total = float(np.sum(labels == 0))
+    if vis_total <= 0 or invis_total <= 0:
+        return float(np.nanmedian(scores)), 0.0, 0.0
+
+    candidates = np.unique(np.clip(scores, 0.0, 1.0))
+    if candidates.size < 16:
+        candidates = np.unique(np.concatenate([candidates, np.linspace(0.0, 1.0, 101)]))
+
+    best_t = float(np.nanmedian(scores))
+    best_vis_recall = 0.0
+    best_invis_recall = -1.0
+    fallback_t = best_t
+    fallback_vis = -1.0
+    fallback_invis = 0.0
+    for t in candidates:
+        pred_visible = scores >= t
+        tp = float(np.sum(pred_visible & (labels == 1)))
+        fn = float(np.sum((~pred_visible) & (labels == 1)))
+        tn = float(np.sum((~pred_visible) & (labels == 0)))
+        fp = float(np.sum(pred_visible & (labels == 0)))
+        vis_recall = tp / max(1.0, tp + fn)
+        invis_recall = tn / max(1.0, tn + fp)
+        if vis_recall > fallback_vis or (abs(vis_recall - fallback_vis) < 1e-12 and invis_recall > fallback_invis):
+            fallback_t = float(t)
+            fallback_vis = float(vis_recall)
+            fallback_invis = float(invis_recall)
+        if vis_recall + 1e-12 < visible_recall_target:
+            continue
+        if (
+            invis_recall > best_invis_recall
+            or (abs(invis_recall - best_invis_recall) < 1e-12 and t > best_t)
+        ):
+            best_t = float(t)
+            best_vis_recall = float(vis_recall)
+            best_invis_recall = float(invis_recall)
+
+    if best_invis_recall < 0:
+        return fallback_t, max(0.0, fallback_vis), max(0.0, fallback_invis)
+    return best_t, best_vis_recall, best_invis_recall
+
+
 def _index_to_stem_image_key(index_value: Any) -> str:
     if isinstance(index_value, tuple):
         parts = [str(v) for v in index_value if str(v).lower() != "nan"]
@@ -694,11 +779,11 @@ def _run_model_predictions_on_images(
     return pred_df
 
 
+
+
 def _fit_joint_params_from_stats(
     speed_samples: np.ndarray,
     missing_ratio: float,
-    visibility_labels: np.ndarray | None = None,
-    confidence_scores: np.ndarray | None = None,
 ) -> dict[str, Any]:
     if speed_samples.size == 0:
         q50 = 0.006
@@ -719,29 +804,6 @@ def _fit_joint_params_from_stats(
     max_extrapolation_frames = 1 if missing_ratio > 0.60 else (2 if missing_ratio > 0.35 else 3)
 
     render_conf_min = float(np.clip(0.18 + 0.40 * missing_ratio, 0.18, 0.75))
-    if visibility_labels is not None and confidence_scores is not None:
-        labels = visibility_labels.astype(np.int32)
-        confs = confidence_scores.astype(np.float64)
-        valid = np.isfinite(confs)
-        labels = labels[valid]
-        confs = confs[valid]
-        if labels.size >= 20 and np.unique(labels).size > 1:
-            cand = np.unique(np.concatenate([np.linspace(0.05, 0.95, 37), np.clip(confs, 0.0, 1.0)]))
-            best_t = render_conf_min
-            best_score = -1.0
-            beta2 = 0.25  # F0.5: precision-biased, less false positive display for occluded points.
-            for t in cand:
-                pred = confs >= t
-                tp = float(np.sum(pred & (labels == 1)))
-                fp = float(np.sum(pred & (labels == 0)))
-                fn = float(np.sum((~pred) & (labels == 1)))
-                denom = (1 + beta2) * tp + beta2 * fn + fp
-                score = ((1 + beta2) * tp / denom) if denom > 0 else 0.0
-                if score > best_score or (abs(score - best_score) < 1e-9 and t > best_t):
-                    best_score = score
-                    best_t = float(t)
-            render_conf_min = float(np.clip(best_t, 0.15, 0.90))
-
     update_conf_min = float(np.clip(render_conf_min - 0.08, 0.08, 0.70))
 
     return {
@@ -764,7 +826,8 @@ def kalman_fitter(
     max_labeled_frames_per_video: int = 1500,
     max_speed_samples_per_joint: int = 30000,
     use_cached_predictions: bool = True,
-) -> dict[str, Any]:
+    dispersion_visible_recall_target: float = 0.95,
+) -> tuple[dict[str, Any], dict[str, float]]:
     """Fit scale-aware Kalman parameters from labels + model predictions."""
     project_root = Path(project_path).resolve()
     config_path = project_root / "config.yaml"
@@ -782,10 +845,12 @@ def kalman_fitter(
         raise FileNotFoundError(f"labeled-data folder not found: {labeled_root}")
 
     cache_dir = project_root / ".kalman_fit_cache" / f"shuffle{shuffle}"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    stats_cache_file = cache_dir / "kalman_fit_dispersion_samples.npz"
     video_scales: list[float] = []
     speed_by_joint: dict[str, list[float]] = defaultdict(list)
     vis_labels_by_joint: dict[str, list[int]] = defaultdict(list)
-    conf_scores_by_joint: dict[str, list[float]] = defaultdict(list)
+    dispersion_scores_by_joint: dict[str, list[float]] = defaultdict(list)
     missing_by_joint: dict[str, int] = defaultdict(int)
     total_by_joint: dict[str, int] = defaultdict(int)
     videos_used: list[str] = []
@@ -857,81 +922,112 @@ def kalman_fitter(
             f"No usable labeled frames found under {labeled_root}. "
             "Expected folders matching stems from config.yaml video_sets."
         )
-
-    pred_df = _run_model_predictions_on_images(
-        config_path=str(config_path),
-        image_paths=all_image_paths,
-        shuffle=shuffle,
-        trainingsetindex=trainingsetindex,
-        modelprefix=modelprefix,
-        cache_dir=cache_dir,
-        use_cached_predictions=use_cached_predictions,
-    )
-    pred_keypoints, pred_joint_names = _load_keypoints_from_df(
-        pred_df,
-        source_label=str(cache_dir / "kalman_fit_image_predictions.h5"),
-    )
-    pred_joint_idx = {name.split("|")[-1]: i for i, name in enumerate(pred_joint_names)}
-    pred_lookup = {
-        _index_to_stem_image_key(idx): pred_keypoints[i]
-        for i, idx in enumerate(pred_df.index)
-    }
-
-    for rec in sampled_records:
-        joint_names = rec["joint_names"]
-        frame_numbers = np.asarray(rec["frame_numbers"], dtype=np.int64)
-        gt_xy = rec["gt_xy"]
-        image_keys = rec["image_keys"]
-        video_scale = float(rec["scale"])
-
-        pred_for_video = np.full((len(image_keys), len(joint_names), 3), np.nan, dtype=np.float64)
-        valid_rows = np.zeros(len(image_keys), dtype=bool)
-        for ridx, key in enumerate(image_keys):
-            pred_row = pred_lookup.get(key)
-            if pred_row is None:
-                continue
-            valid_rows[ridx] = True
-            for j, joint_name in enumerate(joint_names):
-                pidx = pred_joint_idx.get(joint_name.split("|")[-1])
-                if pidx is not None:
-                    pred_for_video[ridx, j] = pred_row[pidx]
-
-        if not np.any(valid_rows):
-            continue
-
-        for j, joint_name in enumerate(joint_names):
-            joint_key = joint_name.split("|")[-1]
-            gt_joint = gt_xy[:, j]
-            gt_visible = np.isfinite(gt_joint).all(axis=1)
-            pred_joint = pred_for_video[:, j]
-            pred_visible = np.isfinite(pred_joint[:, :2]).all(axis=1)
-            pred_conf = pred_joint[:, 2]
-
-            total_by_joint[joint_key] += int(gt_visible.size)
-            missing_by_joint[joint_key] += int(gt_visible.size - np.count_nonzero(gt_visible))
-
-            cls_mask = valid_rows & np.isfinite(pred_conf)
-            if np.any(cls_mask):
-                vis_labels_by_joint[joint_key].extend(gt_visible[cls_mask].astype(np.int32).tolist())
-                conf_scores_by_joint[joint_key].extend(pred_conf[cls_mask].astype(np.float64).tolist())
-
-            motion_mask = gt_visible & pred_visible & valid_rows
-            valid_idx = np.where(motion_mask)[0]
-            if valid_idx.size < 2:
-                continue
-            f = frame_numbers[valid_idx].astype(np.float64)
-            c = pred_joint[valid_idx, :2]
-            dt = np.diff(f)
-            delta = np.linalg.norm(np.diff(c, axis=0), axis=1)
-            good = dt > 0
-            if not np.any(good):
-                continue
-            speed_norm = (delta[good] / dt[good]) / max(video_scale, 1e-6)
-            _append_capped_samples(
-                speed_by_joint[joint_key],
-                speed_norm,
-                max_speed_samples_per_joint,
+    loaded_stats_cache = False
+    if use_cached_predictions and stats_cache_file.exists():
+        try:
+            cached = np.load(stats_cache_file, allow_pickle=True)
+            speed_by_joint = defaultdict(list, _load_dict_list_cache(cached["speed_by_joint"], np.float64))
+            vis_labels_by_joint = defaultdict(list, _load_dict_list_cache(cached["vis_labels_by_joint"], np.int32))
+            dispersion_scores_by_joint = defaultdict(
+                list,
+                _load_dict_list_cache(cached["dispersion_scores_by_joint"], np.float64),
             )
+            missing_by_joint = defaultdict(int, _load_dict_scalar_cache(cached["missing_by_joint"]))
+            total_by_joint = defaultdict(int, _load_dict_scalar_cache(cached["total_by_joint"]))
+            loaded_video_scales = np.asarray(cached["video_scales"], dtype=np.float64).tolist()
+            video_scales = [float(v) for v in loaded_video_scales]
+            loaded_videos = np.asarray(cached["videos_used"], dtype=object).tolist()
+            videos_used = [str(v) for v in loaded_videos]
+            loaded_stats_cache = True
+        except Exception:
+            loaded_stats_cache = False
+
+    if not loaded_stats_cache:
+        pred_df = _run_model_predictions_on_images(
+            config_path=str(config_path),
+            image_paths=all_image_paths,
+            shuffle=shuffle,
+            trainingsetindex=trainingsetindex,
+            modelprefix=modelprefix,
+            cache_dir=cache_dir,
+            use_cached_predictions=use_cached_predictions,
+        )
+        pred_keypoints, pred_joint_names = _load_keypoints_from_df(
+            pred_df,
+            source_label=str(cache_dir / "kalman_fit_image_predictions.h5"),
+        )
+        pred_joint_idx = {name.split("|")[-1]: i for i, name in enumerate(pred_joint_names)}
+        pred_lookup = {
+            _index_to_stem_image_key(idx): pred_keypoints[i]
+            for i, idx in enumerate(pred_df.index)
+        }
+
+        for rec in sampled_records:
+            joint_names = rec["joint_names"]
+            frame_numbers = np.asarray(rec["frame_numbers"], dtype=np.int64)
+            gt_xy = rec["gt_xy"]
+            image_keys = rec["image_keys"]
+            video_scale = float(rec["scale"])
+
+            pred_for_video = np.full((len(image_keys), len(joint_names), 3), np.nan, dtype=np.float64)
+            valid_rows = np.zeros(len(image_keys), dtype=bool)
+            for ridx, key in enumerate(image_keys):
+                pred_row = pred_lookup.get(key)
+                if pred_row is None:
+                    continue
+                valid_rows[ridx] = True
+                for j, joint_name in enumerate(joint_names):
+                    pidx = pred_joint_idx.get(joint_name.split("|")[-1])
+                    if pidx is not None:
+                        pred_for_video[ridx, j] = pred_row[pidx]
+
+            if not np.any(valid_rows):
+                continue
+
+            for j, joint_name in enumerate(joint_names):
+                joint_key = joint_name.split("|")[-1]
+                gt_joint = gt_xy[:, j]
+                gt_visible = np.isfinite(gt_joint).all(axis=1)
+                pred_joint = pred_for_video[:, j]
+                pred_visible = np.isfinite(pred_joint[:, :2]).all(axis=1)
+                pred_disp = pred_joint[:, 2]
+
+                total_by_joint[joint_key] += int(gt_visible.size)
+                missing_by_joint[joint_key] += int(gt_visible.size - np.count_nonzero(gt_visible))
+
+                cls_mask = valid_rows & np.isfinite(pred_disp)
+                if np.any(cls_mask):
+                    vis_labels_by_joint[joint_key].extend(gt_visible[cls_mask].astype(np.int32).tolist())
+                    dispersion_scores_by_joint[joint_key].extend(pred_disp[cls_mask].astype(np.float64).tolist())
+
+                motion_mask = gt_visible & pred_visible & valid_rows
+                valid_idx = np.where(motion_mask)[0]
+                if valid_idx.size < 2:
+                    continue
+                f = frame_numbers[valid_idx].astype(np.float64)
+                c = pred_joint[valid_idx, :2]
+                dt = np.diff(f)
+                delta = np.linalg.norm(np.diff(c, axis=0), axis=1)
+                good = dt > 0
+                if not np.any(good):
+                    continue
+                speed_norm = (delta[good] / dt[good]) / max(video_scale, 1e-6)
+                _append_capped_samples(
+                    speed_by_joint[joint_key],
+                    speed_norm,
+                    max_speed_samples_per_joint,
+                )
+
+        np.savez_compressed(
+            stats_cache_file,
+            speed_by_joint=_dump_dict_list_cache(speed_by_joint),
+            vis_labels_by_joint=_dump_dict_list_cache(vis_labels_by_joint),
+            dispersion_scores_by_joint=_dump_dict_list_cache(dispersion_scores_by_joint),
+            missing_by_joint=_dump_dict_scalar_cache(missing_by_joint),
+            total_by_joint=_dump_dict_scalar_cache(total_by_joint),
+            video_scales=np.asarray(video_scales, dtype=np.float64),
+            videos_used=np.asarray(videos_used, dtype=object),
+        )
 
     if not total_by_joint:
         raise ValueError(
@@ -952,9 +1048,9 @@ def kalman_fitter(
         if any(len(v) for v in vis_labels_by_joint.values())
         else np.array([], dtype=np.int32)
     )
-    all_confs = (
-        np.concatenate([np.asarray(v, dtype=np.float64) for v in conf_scores_by_joint.values() if len(v)], axis=0)
-        if any(len(v) for v in conf_scores_by_joint.values())
+    all_dispersion = (
+        np.concatenate([np.asarray(v, dtype=np.float64) for v in dispersion_scores_by_joint.values() if len(v)], axis=0)
+        if any(len(v) for v in dispersion_scores_by_joint.values())
         else np.array([], dtype=np.float64)
     )
     global_missing_ratio = (
@@ -965,11 +1061,15 @@ def kalman_fitter(
     global_params = _fit_joint_params_from_stats(
         speed_samples=all_speed,
         missing_ratio=global_missing_ratio,
-        visibility_labels=all_labels if all_labels.size else None,
-        confidence_scores=all_confs if all_confs.size else None,
+    )
+    global_disp_threshold, global_vis_recall, global_invis_recall = _fit_dispersion_threshold(
+        visibility_labels=all_labels,
+        dispersion_scores=all_dispersion,
+        visible_recall_target=dispersion_visible_recall_target,
     )
 
     per_joint: dict[str, dict[str, Any]] = {}
+    per_joint_invisible_recall: dict[str, float] = {}
     for joint_key in fitted_joint_names:
         speeds = np.asarray(speed_by_joint.get(joint_key, []), dtype=np.float64)
         if speeds.size == 0 and all_speed.size:
@@ -980,16 +1080,26 @@ def kalman_fitter(
         if total_by_joint.get(joint_key, 0) == 0:
             miss_ratio = global_missing_ratio
         labels = np.asarray(vis_labels_by_joint.get(joint_key, []), dtype=np.int32)
-        confs = np.asarray(conf_scores_by_joint.get(joint_key, []), dtype=np.float64)
+        disp_scores = np.asarray(dispersion_scores_by_joint.get(joint_key, []), dtype=np.float64)
         if labels.size == 0 and all_labels.size:
             labels = all_labels
-            confs = all_confs
-        per_joint[joint_key] = _fit_joint_params_from_stats(
+            disp_scores = all_dispersion
+        base_params = _fit_joint_params_from_stats(
             speed_samples=speeds,
             missing_ratio=miss_ratio,
-            visibility_labels=labels if labels.size else None,
-            confidence_scores=confs if confs.size else None,
         )
+        if labels.size and disp_scores.size:
+            disp_t, _, invis_recall = _fit_dispersion_threshold(
+                visibility_labels=labels,
+                dispersion_scores=disp_scores,
+                visible_recall_target=dispersion_visible_recall_target,
+            )
+        else:
+            disp_t = global_disp_threshold
+            invis_recall = global_invis_recall
+        base_params["dispersion_threshold"] = float(np.clip(disp_t, 0.0, 1.0))
+        per_joint[joint_key] = base_params
+        per_joint_invisible_recall[joint_key] = float(np.clip(invis_recall, 0.0, 1.0))
 
     global_defaults = {
         "process_var": global_params["process_var"],
@@ -1006,6 +1116,10 @@ def kalman_fitter(
         "max_extrapolation_frames": global_params["max_extrapolation_frames"],
         "max_pos_std_norm": global_params["max_pos_std_norm"],
         "draw_conf_thresh": 0.1,
+        "dispersion_visible_recall_target": float(np.clip(dispersion_visible_recall_target, 0.5, 0.999)),
+        "dispersion_threshold": float(np.clip(global_disp_threshold, 0.0, 1.0)),
+        "dispersion_visible_recall": float(np.clip(global_vis_recall, 0.0, 1.0)),
+        "dispersion_invisible_recall": float(np.clip(global_invis_recall, 0.0, 1.0)),
     }
 
     return {
@@ -1017,7 +1131,7 @@ def kalman_fitter(
         "scale_reference": float(np.median(video_scales)) if video_scales else 200.0,
         "global": global_defaults,
         "per_joint": per_joint,
-    }
+    }, per_joint_invisible_recall
 
 
 def kalman_video(
@@ -1026,6 +1140,8 @@ def kalman_video(
     shuffle: int | None = None,
     destfolder: str | None = None,
     kalman_params: dict[str, Any] | None = None,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
     process_var: float = 1.0,
     obs_var: float = 12.0,
     gate_threshold: float = 80.0,
@@ -1047,6 +1163,9 @@ def kalman_video(
     draw_conf_thresh_offset: float = 0.0,
 ) -> list[str]:
     """Render a video with Kalman-smoothed DLC keypoints."""
+    if isinstance(kalman_params, tuple) and len(kalman_params) > 0:
+        kalman_params = kalman_params[0]
+
     videos = _normalize_videos(videofile_path)
     output_videos: list[str] = []
 
@@ -1069,6 +1188,8 @@ def kalman_video(
             "max_extrapolation_frames": max_extrapolation_frames,
             "max_pos_std": max_pos_std,
             "draw_conf_thresh": draw_conf_thresh,
+            "dispersion_threshold": 0.0,
+            "dispersion_visible_recall_target": 0.95,
         }
         runtime_cfg, per_joint_cfg = _resolve_runtime_kalman_config(
             kalman_params=kalman_params,
@@ -1121,6 +1242,12 @@ def kalman_video(
             per_joint_params=per_joint_cfg,
         )
         smoothed, visible_mask, effective_conf = tracker.smooth(keypoints)
+        global_disp_threshold = float(np.clip(runtime_cfg.get("dispersion_threshold", 0.0), 0.0, 1.0))
+        per_joint_disp_threshold = np.full(len(joint_names), global_disp_threshold, dtype=np.float64)
+        for j, joint_name in enumerate(joint_names):
+            joint_cfg = per_joint_cfg[j] if j < len(per_joint_cfg) else {}
+            if isinstance(joint_cfg, dict) and "dispersion_threshold" in joint_cfg:
+                per_joint_disp_threshold[j] = float(np.clip(joint_cfg["dispersion_threshold"], 0.0, 1.0))
 
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -1160,11 +1287,17 @@ def kalman_video(
                 if not ok:
                     break
                 if frame_idx < total_pose_frames:
+                    disp_per_joint = keypoints[frame_idx, :, 2]
+                    visible_by_dispersion = (
+                        np.isfinite(disp_per_joint)
+                        & (disp_per_joint >= per_joint_disp_threshold)
+                    )
+                    draw_visible_mask = visible_mask[frame_idx] & visible_by_dispersion
                     frame = _draw_pose(
                         frame,
                         smoothed[frame_idx],
                         edges,
-                        visible_mask[frame_idx],
+                        draw_visible_mask,
                         effective_conf[frame_idx],
                         conf_thresh=float(runtime_cfg["draw_conf_thresh"]),
                     )

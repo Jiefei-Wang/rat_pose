@@ -1,11 +1,18 @@
+import copy
 import os
+import math
+import re
+import tempfile
+from collections.abc import Iterable as IterableABC
 from pathlib import Path
 from typing import Iterable
 
 import cv2
 import deeplabcut
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
 from deeplabcut.utils import auxfun_multianimal
 from tqdm import tqdm
 
@@ -65,3 +72,508 @@ def remove_filtered_prediction_files(
 
     return removed_paths
 
+
+def _parse_frame_idx_from_name(name: str) -> int | None:
+    match = re.search(r"img(\d+)", name, flags=re.IGNORECASE)
+    if not match:
+        match = re.search(r"(\d+)", name)
+    return int(match.group(1)) if match else None
+
+
+def _resolve_panel_size(
+    img_w: int,
+    img_h: int,
+    height_resolution: int | None,
+) -> tuple[int, int]:
+    panel_h = int(height_resolution) if height_resolution is not None else int(img_h)
+    panel_h = max(1, panel_h)
+    panel_w = int(round(panel_h * (img_w / max(1, img_h))))
+    panel_w = max(1, panel_w)
+    return panel_w, panel_h
+
+
+def _heatmaps_from_xy_distributions(model_output: dict) -> list[np.ndarray]:
+    bodypart = model_output.get("bodypart", {})
+    x_dist = bodypart.get("x")
+    y_dist = bodypart.get("y")
+    if x_dist is None or y_dist is None:
+        return []
+
+    x_arr = np.asarray(x_dist)
+    y_arr = np.asarray(y_dist)
+    if x_arr.ndim == 3:
+        x_arr = x_arr[0]
+    if y_arr.ndim == 3:
+        y_arr = y_arr[0]
+    if x_arr.ndim != 2 or y_arr.ndim != 2:
+        return []
+    n_kpts = min(x_arr.shape[0], y_arr.shape[0])
+    maps: list[np.ndarray] = []
+    for k in range(n_kpts):
+        xk = x_arr[k].astype(np.float64)
+        yk = y_arr[k].astype(np.float64)
+        if not np.isfinite(xk).all() or not np.isfinite(yk).all():
+            maps.append(np.zeros((64, 64), dtype=np.float32))
+            continue
+        xk = np.maximum(xk, 0)
+        yk = np.maximum(yk, 0)
+        x_sum = xk.sum()
+        y_sum = yk.sum()
+        if x_sum > 0:
+            xk /= x_sum
+        if y_sum > 0:
+            yk /= y_sum
+        heat = np.outer(yk, xk)
+        hmax = float(np.max(heat))
+        if hmax > 0:
+            heat = heat / hmax
+        maps.append(heat.astype(np.float32))
+    return maps
+
+
+def _peak_points_from_heatmaps(
+    heatmaps: list[np.ndarray],
+    image_size: tuple[int, int],
+    crop_size: tuple[int, int] | None = None,
+    scale: tuple[float, float] | None = None,
+    offset: tuple[float, float] | None = None,
+) -> list[tuple[int, int]]:
+    img_w, img_h = image_size
+    crop_w = crop_size[0] if crop_size is not None else None
+    crop_h = crop_size[1] if crop_size is not None else None
+    points: list[tuple[int, int]] = []
+    for hm in heatmaps:
+        arr = np.asarray(hm)
+        if arr.ndim != 2 or arr.size == 0 or not np.isfinite(arr).any():
+            points.append((0, 0))
+            continue
+        y_idx, x_idx = np.unravel_index(np.nanargmax(arr), arr.shape)
+        if scale is not None and offset is not None and crop_w is not None and crop_h is not None:
+            x_crop = float((x_idx / max(1, arr.shape[1] - 1)) * (crop_w - 1))
+            y_crop = float((y_idx / max(1, arr.shape[0] - 1)) * (crop_h - 1))
+            x = int(round(x_crop * float(scale[0]) + float(offset[0])))
+            y = int(round(y_crop * float(scale[1]) + float(offset[1])))
+        else:
+            x = int(round((x_idx / max(1, arr.shape[1] - 1)) * (img_w - 1)))
+            y = int(round((y_idx / max(1, arr.shape[0] - 1)) * (img_h - 1)))
+        x = int(np.clip(x, 0, max(0, img_w - 1)))
+        y = int(np.clip(y, 0, max(0, img_h - 1)))
+        points.append((x, y))
+    return points
+
+
+def _project_heatmap_to_image(
+    heatmap: np.ndarray,
+    image_size: tuple[int, int],
+    crop_size: tuple[int, int] | None = None,
+    scale: tuple[float, float] | None = None,
+    offset: tuple[float, float] | None = None,
+) -> np.ndarray:
+    img_w, img_h = image_size
+    hm = np.asarray(heatmap, dtype=np.float32)
+    if hm.ndim != 2 or hm.size == 0:
+        return np.zeros((img_h, img_w), dtype=np.float32)
+
+    if scale is None or offset is None or crop_size is None:
+        projected = cv2.resize(hm, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+        return np.clip(projected, 0.0, 1.0)
+
+    crop_w, crop_h = crop_size
+    if crop_w <= 0 or crop_h <= 0:
+        return np.zeros((img_h, img_w), dtype=np.float32)
+
+    hm_crop = cv2.resize(hm, (crop_w, crop_h), interpolation=cv2.INTER_LINEAR)
+    dst_x1 = int(np.floor(float(offset[0])))
+    dst_y1 = int(np.floor(float(offset[1])))
+    dst_x2 = int(np.ceil(float(offset[0]) + float(scale[0]) * crop_w))
+    dst_y2 = int(np.ceil(float(offset[1]) + float(scale[1]) * crop_h))
+
+    if dst_x2 <= dst_x1 or dst_y2 <= dst_y1:
+        return np.zeros((img_h, img_w), dtype=np.float32)
+
+    heat_resized = cv2.resize(
+        hm_crop,
+        (max(1, dst_x2 - dst_x1), max(1, dst_y2 - dst_y1)),
+        interpolation=cv2.INTER_LINEAR,
+    )
+
+    canvas = np.zeros((img_h, img_w), dtype=np.float32)
+    x1 = max(0, dst_x1)
+    y1 = max(0, dst_y1)
+    x2 = min(img_w, dst_x2)
+    y2 = min(img_h, dst_y2)
+    if x2 <= x1 or y2 <= y1:
+        return canvas
+
+    src_x1 = x1 - dst_x1
+    src_y1 = y1 - dst_y1
+    src_x2 = src_x1 + (x2 - x1)
+    src_y2 = src_y1 + (y2 - y1)
+    canvas[y1:y2, x1:x2] = heat_resized[src_y1:src_y2, src_x1:src_x2]
+
+    vmax = float(np.nanmax(canvas))
+    if vmax > 0:
+        canvas /= vmax
+    return np.clip(canvas, 0.0, 1.0)
+
+
+def generate_keypoint_heatmap_grid(
+    project_path: str | Path,
+    shuffle: int,
+    video_path: str | Path,
+    frame_idx: int | Iterable[int],
+    outpath: str | Path,
+    height_resolution: int | None = None,
+    background_alpha: float = 0.6,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    output_resolution: int | None = None,
+) -> str | list[str]:
+    """Generate a keypoint heatmap grid for one video frame (first panel is original image).
+
+    `height_resolution` controls per-panel height in pixels; panel width keeps source aspect ratio.
+    `output_resolution` is a deprecated alias of `height_resolution`.
+    """
+    if isinstance(frame_idx, IterableABC) and not isinstance(frame_idx, (str, bytes)):
+        frame_indices = [int(i) for i in frame_idx]
+        if len(frame_indices) == 0:
+            raise ValueError("frame_idx list is empty.")
+        if len(frame_indices) > 1:
+            return [
+                generate_keypoint_heatmap_grid(
+                    project_path=project_path,
+                    shuffle=shuffle,
+                    video_path=video_path,
+                    frame_idx=i,
+                    outpath=outpath,
+                    height_resolution=height_resolution,
+                    background_alpha=background_alpha,
+                    trainingsetindex=trainingsetindex,
+                    modelprefix=modelprefix,
+                    output_resolution=output_resolution,
+                )
+                for i in frame_indices
+            ]
+        frame_idx = frame_indices[0]
+    else:
+        frame_idx = int(frame_idx)
+    background_alpha = float(np.clip(background_alpha, 0.0, 1.0))
+
+    project_path = Path(project_path).resolve()
+    config_path = project_path / "config.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"config.yaml not found: {config_path}")
+
+    cfg = deeplabcut.auxiliaryfunctions.read_config(str(config_path))
+    engine = str(cfg.get("engine", "pytorch")).lower()
+    if engine != "pytorch":
+        raise NotImplementedError("generate_keypoint_heatmap_grid currently supports PyTorch engine only.")
+
+    video_path = Path(video_path).resolve()
+    if not video_path.exists():
+        raise FileNotFoundError(f"video not found: {video_path}")
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise IOError(f"Could not open video: {video_path}")
+    cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
+    ok, frame_bgr = cap.read()
+    cap.release()
+    if not ok or frame_bgr is None:
+        raise ValueError(f"Could not read frame {frame_idx} from {video_path}")
+
+    out_dir = Path(outpath).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    topdown_scale: tuple[float, float] | None = None
+    topdown_offset: tuple[float, float] | None = None
+    crop_size: tuple[int, int] | None = None
+    pred_xy: np.ndarray | None = None
+    pred_likelihood: np.ndarray | None = None
+
+    with tempfile.TemporaryDirectory(prefix="dlc_heat_") as tmpdir:
+        tmp_image = Path(tmpdir) / f"img{int(frame_idx):06d}.png"
+        cv2.imwrite(str(tmp_image), frame_bgr)
+
+        from deeplabcut.pose_estimation_pytorch import data
+        from deeplabcut.pose_estimation_pytorch.apis import utils as pep_utils
+        from deeplabcut.pose_estimation_pytorch.apis.visualization import (
+            _collect_model_outputs,
+            _get_context,
+            _parse_model_outputs,
+        )
+        from deeplabcut.pose_estimation_pytorch.task import Task
+
+        loader = data.DLCLoader(
+            config=str(config_path),
+            shuffle=shuffle,
+            trainset_index=trainingsetindex,
+            modelprefix=modelprefix,
+        )
+        loader.model_cfg["device"] = pep_utils.resolve_device(loader.model_cfg)
+
+        snapshot_index = cfg.get("snapshotindex", -1)
+        snapshots = pep_utils.get_model_snapshots(snapshot_index, loader.model_folder, loader.pose_task)
+        if not snapshots:
+            raise RuntimeError("No model snapshot found for heatmap extraction.")
+        snapshot = snapshots[0]
+
+        runner = pep_utils.get_pose_inference_runner(
+            model_config=loader.model_cfg,
+            snapshot_path=snapshot.path,
+        )
+        detector_snapshot_index = cfg.get("detector_snapshotindex", -1)
+        context = _get_context([tmp_image], loader, detector_snapshot_index, runner.device)
+        image_context = {}
+        if context is not None and len(context) > 0 and context[0] is not None:
+            image_context = copy.deepcopy(context[0])
+
+        inputs, image_context = runner.preprocessor(tmp_image, image_context)
+        if len(inputs) == 0:
+            raise RuntimeError("No detections/bounding boxes available for heatmap extraction.")
+
+        with torch.no_grad():
+            raw_outputs = runner.model(inputs.to(runner.device))
+
+        for head, head_cfg in runner.model.cfg["heads"].items():
+            predictor_cfg = head_cfg.get("predictor", {})
+            apply_sigmoid = bool(predictor_cfg.get("apply_sigmoid", False))
+            is_paf_predictor = predictor_cfg.get("type") == "PartAffinityFieldPredictor"
+            if (apply_sigmoid or is_paf_predictor) and "heatmap" in raw_outputs[head]:
+                raw_outputs[head]["heatmap"] = torch.sigmoid(raw_outputs[head]["heatmap"])
+
+        model_outputs = {
+            head: {name: tensor.cpu().numpy() for name, tensor in head_outputs.items()}
+            for head, head_outputs in raw_outputs.items()
+        }
+
+        raw_predictions = runner.model.get_predictions(raw_outputs)
+        predictions_per_input = [
+            {
+                head: {
+                    pred_name: pred[b].cpu().numpy()
+                    for pred_name, pred in head_outputs.items()
+                }
+                for head, head_outputs in raw_predictions.items()
+            }
+            for b in range(len(inputs))
+        ]
+        parsed_predictions = None
+        if runner.postprocessor is not None:
+            parsed_predictions, _ = runner.postprocessor(predictions_per_input, image_context)
+
+        result = dict(
+            inputs=inputs.cpu().numpy(),
+            context=image_context,
+            outputs=model_outputs,
+        )
+        keys, images, outputs = _collect_model_outputs(loader.pose_task, result, image_idx=0)
+        if not keys:
+            raise RuntimeError("No model outputs were extracted for the target frame.")
+
+        target_output_idx = 0
+        bbox_scores = np.asarray(image_context.get("bbox_scores", []), dtype=np.float64)
+        if bbox_scores.ndim == 1 and bbox_scores.size > 0 and np.isfinite(bbox_scores).any():
+            target_output_idx = int(np.nanargmax(bbox_scores))
+        target_output_idx = int(np.clip(target_output_idx, 0, len(outputs) - 1))
+
+        image_rgb, heatmaps, _, _ = _parse_model_outputs(
+            images[target_output_idx],
+            outputs[target_output_idx],
+            strides={k: runner.model.get_stride(k) for k in runner.model.heads.keys()},
+            denormalize_image=True,
+        )
+        crop_size = (int(image_rgb.shape[1]), int(image_rgb.shape[0]))
+        if len(heatmaps) == 0:
+            heatmaps = _heatmaps_from_xy_distributions(outputs[target_output_idx])
+
+        if loader.pose_task in {Task.TOP_DOWN, Task.COND_TOP_DOWN}:
+            scales = np.asarray(image_context.get("scales", []), dtype=np.float64)
+            offsets = np.asarray(image_context.get("offsets", []), dtype=np.float64)
+            if (
+                scales.ndim == 2
+                and offsets.ndim == 2
+                and len(scales) > target_output_idx
+                and len(offsets) > target_output_idx
+            ):
+                topdown_scale = (float(scales[target_output_idx, 0]), float(scales[target_output_idx, 1]))
+                topdown_offset = (float(offsets[target_output_idx, 0]), float(offsets[target_output_idx, 1]))
+            elif scales.ndim == 1 and offsets.ndim == 1 and scales.size >= 2 and offsets.size >= 2:
+                topdown_scale = (float(scales[0]), float(scales[1]))
+                topdown_offset = (float(offsets[0]), float(offsets[1]))
+
+        if parsed_predictions is not None and "bodyparts" in parsed_predictions:
+            bodyparts_pred = np.asarray(parsed_predictions["bodyparts"], dtype=np.float64)
+            if bodyparts_pred.ndim == 3 and bodyparts_pred.shape[0] > 0:
+                if bodyparts_pred.shape[0] > 1:
+                    valid = np.isfinite(bodyparts_pred[..., 2])
+                    avg_conf = np.where(
+                        np.any(valid, axis=1),
+                        np.nanmean(np.where(valid, bodyparts_pred[..., 2], np.nan), axis=1),
+                        -np.inf,
+                    )
+                    selected_ind = int(np.nanargmax(avg_conf))
+                else:
+                    selected_ind = 0
+                pred_xy = bodyparts_pred[selected_ind, :, :2]
+                pred_likelihood = np.clip(bodyparts_pred[selected_ind, :, 2], 0.0, 1.0)
+
+    bodyparts = loader.model_cfg["metadata"]["bodyparts"] + loader.model_cfg["metadata"]["unique_bodyparts"]
+    n_maps = len(heatmaps)
+    panel_count = 1 + n_maps
+    ncols = int(math.ceil(math.sqrt(panel_count)))
+    nrows = int(math.ceil(panel_count / ncols))
+
+    original_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    img_h, img_w = original_rgb.shape[:2]
+    if height_resolution is None and output_resolution is not None:
+        height_resolution = output_resolution
+
+    panel_w, panel_h = _resolve_panel_size(img_w=img_w, img_h=img_h, height_resolution=height_resolution)
+    width_px = int(panel_w * ncols)
+    height_px = int(panel_h * nrows)
+    dpi = 200
+    fig = plt.figure(figsize=(width_px / dpi, height_px / dpi), dpi=dpi)
+    axes = fig.subplots(nrows, ncols)
+    axes = np.array(axes).reshape(-1)
+
+    if pred_xy is not None and pred_xy.ndim == 2 and pred_xy.shape[1] == 2:
+        peak_points = []
+        for xy in pred_xy:
+            if np.isfinite(xy).all():
+                x = int(np.clip(round(float(xy[0])), 0, max(0, original_rgb.shape[1] - 1)))
+                y = int(np.clip(round(float(xy[1])), 0, max(0, original_rgb.shape[0] - 1)))
+                peak_points.append((x, y))
+            else:
+                peak_points.append((0, 0))
+    else:
+        peak_points = _peak_points_from_heatmaps(
+            heatmaps,
+            (original_rgb.shape[1], original_rgb.shape[0]),
+            crop_size=crop_size,
+            scale=topdown_scale,
+            offset=topdown_offset,
+        )
+    annotated = original_rgb.copy()
+    for idx, (x, y) in enumerate(peak_points):
+        cv2.circle(annotated, (x, y), 4, (0, 255, 0), -1)
+        label = bodyparts[idx] if idx < len(bodyparts) else f"kp_{idx}"
+        cv2.putText(
+            annotated,
+            label,
+            (x + 4, max(12, y - 4)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (255, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+    axes[0].imshow(annotated, aspect="auto")
+    axes[0].set_aspect("auto")
+    axes[0].text(
+        0.02,
+        0.98,
+        "Original",
+        transform=axes[0].transAxes,
+        ha="left",
+        va="top",
+        color="white",
+        fontsize=8,
+        bbox=dict(facecolor="black", alpha=0.35, pad=1, edgecolor="none"),
+    )
+    axes[0].axis("off")
+
+    for idx in range(n_maps):
+        ax = axes[idx + 1]
+        hm = _project_heatmap_to_image(
+            heatmaps[idx],
+            image_size=(img_w, img_h),
+            crop_size=crop_size,
+            scale=topdown_scale,
+            offset=topdown_offset,
+        )
+        if pred_likelihood is not None and idx < len(pred_likelihood) and np.isfinite(pred_likelihood[idx]):
+            hm = hm * float(np.clip(pred_likelihood[idx], 0.0, 1.0))
+        ax.imshow(original_rgb, alpha=background_alpha, aspect="auto")
+        ax.imshow(hm, cmap="magma", alpha=0.75, aspect="auto", vmin=0.0, vmax=1.0)
+        ax.set_aspect("auto")
+        title = bodyparts[idx] if idx < len(bodyparts) else f"kp_{idx}"
+        ax.text(
+            0.02,
+            0.98,
+            title,
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            color="white",
+            fontsize=8,
+            bbox=dict(facecolor="black", alpha=0.35, pad=1, edgecolor="none"),
+        )
+        ax.axis("off")
+
+    for idx in range(panel_count, len(axes)):
+        axes[idx].axis("off")
+
+    fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0, wspace=0.0, hspace=0.0)
+    save_path = out_dir / f"{video_path.stem}_frame{int(frame_idx):06d}_heatgrid.png"
+    fig.savefig(save_path, dpi=dpi)
+    plt.close(fig)
+    return str(save_path)
+
+
+def generate_missing_label_heatmap(
+    project_path: str | Path,
+    shuffle: int = 3,
+    outpath: str | Path = "test_heat",
+    height_resolution: int | None = None,
+    background_alpha: float = 0.6,
+    trainingsetindex: int = 0,
+    modelprefix: str = "",
+    output_resolution: int | None = None,
+) -> str:
+    """Pick one labeled frame with missing keypoints and render full keypoint heatmap grid."""
+    project_path = Path(project_path).resolve()
+    config_path = project_path / "config.yaml"
+    cfg = deeplabcut.auxiliaryfunctions.read_config(str(config_path))
+    scorer = str(cfg.get("scorer", "")).strip()
+    videos_dir = project_path / "videos"
+    labeled_root = project_path / "labeled-data"
+
+    for video_cfg_path in cfg.get("video_sets", {}).keys():
+        stem = Path(video_cfg_path).stem
+        label_dir = labeled_root / stem
+        if not label_dir.exists():
+            continue
+        h5_candidates = [label_dir / f"CollectedData_{scorer}.h5"] + sorted(label_dir.glob("CollectedData_*.h5"))
+        h5_path = next((p for p in h5_candidates if p.exists()), None)
+        if h5_path is None:
+            continue
+
+        df = pd.read_hdf(h5_path)
+        missing_rows = df.isna().any(axis=1)
+        if not missing_rows.any():
+            continue
+
+        row_idx = df.index[missing_rows][0]
+        image_name = str(row_idx[-1] if isinstance(row_idx, tuple) else row_idx)
+        frame_idx = _parse_frame_idx_from_name(image_name)
+        if frame_idx is None:
+            continue
+
+        video_candidates = [p for p in videos_dir.glob(f"{stem}.*") if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv", ".mpeg"}]
+        if not video_candidates:
+            continue
+
+        return generate_keypoint_heatmap_grid(
+            project_path=project_path,
+            shuffle=shuffle,
+            video_path=video_candidates[0],
+            frame_idx=frame_idx,
+            outpath=outpath,
+            height_resolution=height_resolution,
+            background_alpha=background_alpha,
+            trainingsetindex=trainingsetindex,
+            modelprefix=modelprefix,
+            output_resolution=output_resolution,
+        )
+
+    raise RuntimeError("No labeled frame with missing keypoints was found in labeled-data.")

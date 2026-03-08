@@ -46,11 +46,12 @@ deeplabcut.create_labeled_video(
 )
 
 
-kalman_params = kalman_fitter(
+kalman_params, metrics = kalman_fitter(
     project_path,
     shuffle=shuffle,
     trainingsetindex=0,
-    use_cached_predictions=True
+    use_cached_predictions=True,
+    dispersion_visible_recall_target=0.95
 )
 kalman_video(
     config_path,
@@ -60,6 +61,28 @@ kalman_video(
     # max_extrapolation_frames =3,
     # render_conf_min =0.3
     render_conf_min_offset = -0.3,
-    gate_threshold_offset = 8,
+    # gate_threshold_offset = 16,
     kalman_params = kalman_params
 )
+
+
+
+from modules.inference_utils import generate_missing_label_heatmap
+
+generate_missing_label_heatmap(
+    project_path=project_path,
+    shuffle=3,
+    outpath=project_path+"/test_heat",   
+    output_resolution=2048
+)
+
+out_file = generate_keypoint_heatmap_grid(
+    project_path=project_path,                         
+    shuffle=3,                                               
+    video_path=videofile_path[0],   
+    frame_idx=range(0, 1000, 100),                                            
+    outpath=project_path+"/test_heat",                        
+    # output_resolution=2048*8
+    background_alpha = 0.6
+)
+print(out_file)

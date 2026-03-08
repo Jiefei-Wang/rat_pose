@@ -15,3 +15,4 @@ projects/rat_pose/train_dropin copy.yaml
 
 projects/rat/test_snap
 projects/rat/test_video
+projects/rat/.kalman_fit_cache/**
