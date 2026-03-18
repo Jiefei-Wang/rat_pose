@@ -65,6 +65,8 @@ kalman_video(
     videofile_path,
     shuffle=shuffle,
     destfolder=destfolder,
+    # render_conf_min = 0.6,
+    # max_extrapolation_frames = 10,
     render_conf_min_offset=-0.1,
     kalman_params=kalman_params,
     stability_n=61,

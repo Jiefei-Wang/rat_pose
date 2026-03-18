@@ -1,4 +1,3 @@
-
 import re
 import os
 import math
@@ -6,6 +5,12 @@ import pandas as pd
 import yaml
 import deeplabcut
 from modules.image_utils import get_image_from_video, save_image
+from modules.label_csv_utils import (
+    frame_idx_to_image_name,
+    get_image_names,
+    load_keypoints,
+    save_keypoints,
+)
 from pathlib import Path
 import copy
 
@@ -243,11 +248,8 @@ def reconstruct_labeled_data(project_path, refresh=False):
 
 def csv_to_img(label_folder_path, video_path, csv_path, refresh=False):
     try:
-        # Read the CSV file
-        df = pd.read_csv(csv_path)
-        image_frames_char = df['Unnamed: 2'].tolist()
-        # remove na values
-        image_frames_char = [i for i in image_frames_char if isinstance(i, str)]
+        df = load_keypoints(csv_path)
+        image_frames_char = get_image_names(df)
         # remove duplicates
         if not refresh:
             png_files = [f for f in os.listdir(label_folder_path) if f.endswith('.png')]
@@ -321,9 +323,8 @@ def change_video_name(project_path, old_name, new_name):
         csv_files = [f for f in os.listdir(new_dir) if f.endswith('.csv')]
         for csv_file in csv_files:
             csv_path = os.path.join(new_dir, csv_file)
-            df = pd.read_csv(csv_path, header=None)
-            df.iloc[3:, 1] = new_name
-            df.to_csv(csv_path, index=False, header=False)
+            df = load_keypoints(csv_path)
+            save_keypoints(df, new_name, csv_path)
     else:
         print(f"Labels directory {new_dir} not found")
 
@@ -411,8 +412,8 @@ def stat_report(project_path):
         manual_images = set()
         n_manual_labels = 0
         if os.path.exists(manual_csv):
-            df = pd.read_csv(manual_csv, header=None, skiprows=3)
-            manual_images = set(df.iloc[:, 2].dropna().tolist())
+            df = load_keypoints(manual_csv)
+            manual_images = set(get_image_names(df))
             n_manual_labels = len(manual_images)
         
         # Parse machine labels from machinelabels CSV
@@ -420,8 +421,8 @@ def stat_report(project_path):
         machine_images = set()
         n_machine_labels = 0
         if os.path.exists(machine_csv):
-            df = pd.read_csv(machine_csv, header=None, skiprows=3)
-            machine_images = set(df.iloc[:, 2].dropna().tolist())
+            df = load_keypoints(machine_csv)
+            machine_images = set(get_image_names(df))
             n_machine_labels = len(machine_images)
         
         # Matched = label images that have a corresponding PNG
@@ -447,40 +448,15 @@ def stat_report(project_path):
     machine_total = f"{total_machine_matched}/{total_machine_labels}"
     print(f"{'TOTAL (' + str(total_videos) + ' videos)':<35} {manual_total:<20} {machine_total:<20} {total_uncorrected:<12}")
 
-
 def _load_xy_from_label_csv(csv_path):
     """
     Load a DLC-style CSV and return a frame-indexed DataFrame of bodypart x/y columns.
-    If duplicate bodypart/coord columns exist across scorers, the first non-null value is used.
+    If duplicate frame rows exist, the first non-null value is used.
     """
-    df = pd.read_csv(csv_path, header=[0, 1, 2])
-    if df.shape[1] < 4:
+    df = load_keypoints(csv_path)
+    if df.empty:
         return pd.DataFrame()
-
-    frame_series = df.iloc[:, 2].astype(str).str.strip()
-    frame_series = frame_series.where(frame_series != "nan")
-
-    col_map = {}
-    for col in df.columns[3:]:
-        # DeepLabCut header columns are usually (scorer, bodypart, coord)
-        if len(col) < 3:
-            continue
-        bodypart = str(col[1]).strip()
-        coord = str(col[2]).strip().lower()
-        if coord not in ("x", "y"):
-            continue
-        col_map.setdefault((bodypart, coord), []).append(col)
-
-    out = pd.DataFrame({"frame": frame_series})
-    for (bodypart, coord), cols in col_map.items():
-        values = df.loc[:, cols]
-        if isinstance(values, pd.Series):
-            out[f"{bodypart}_{coord}"] = values
-        else:
-            out[f"{bodypart}_{coord}"] = values.bfill(axis=1).iloc[:, 0]
-
-    out = out.dropna(subset=["frame"]).set_index("frame")
-    # Keep one row per frame if duplicates exist.
+    out = df.set_index("frame")
     out = out.groupby(level=0).first()
     return out
 
@@ -524,11 +500,9 @@ def find_unchanged_labels(project_path, cutoff=1):
             continue
         
         # Manual row index mapping in original CollectedData order (0..N-1).
-        manual_raw = pd.read_csv(manual_csv, header=[0, 1, 2])
-        manual_frames_raw = manual_raw.iloc[:, 2].astype(str).str.strip()
-        manual_frames_raw = manual_frames_raw.where(manual_frames_raw != "nan")
+        manual_raw = load_keypoints(manual_csv)
         manual_idx_map = {}
-        for idx, frame in enumerate(manual_frames_raw.dropna()):
+        for idx, frame in enumerate(manual_raw["frame"].dropna().astype(int)):
             if frame not in manual_idx_map:
                 manual_idx_map[frame] = idx
 
@@ -545,9 +519,10 @@ def find_unchanged_labels(project_path, cutoff=1):
             continue
 
         shared_frames = manual_df.index.intersection(machine_df.index)
-        for frame_name in shared_frames:
-            manual_row = manual_df.loc[frame_name]
-            machine_row = machine_df.loc[frame_name]
+        frame_padding_width = manual_raw.attrs.get("dlc_frame_padding_width", 1)
+        for frame_idx in shared_frames:
+            manual_row = manual_df.loc[frame_idx]
+            machine_row = machine_df.loc[frame_idx]
             frame_is_unchanged = True
 
             for bp in shared_bps:
@@ -574,7 +549,8 @@ def find_unchanged_labels(project_path, cutoff=1):
                     break
 
             if frame_is_unchanged:
-                manual_idx = manual_idx_map.get(frame_name)
+                frame_name = frame_idx_to_image_name(frame_idx, frame_padding_width)
+                manual_idx = manual_idx_map.get(frame_idx)
                 unchanged_frames.append({
                     "video_name": video_name,
                     "frame_name": frame_name,
