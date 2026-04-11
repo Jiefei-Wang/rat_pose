@@ -7,8 +7,7 @@ identity:
 
 
 # Project path (change when moving around)
-project_path: /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-  Branch/code/rat_pose/projects/rat
+project_path: C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat
 
 
 # Default DeepLabCut engine to use for shuffle creation (either pytorch or tensorflow)
@@ -17,48 +16,34 @@ engine: pytorch
 
 # Annotation data set configuration (and individual video cropping parameters)
 video_sets:
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/2025-03-18 12-58-10.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/2025-03-18 12-58-46.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/2025-03-18 14-08-10.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/Camera4_stitched.mp4
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 11 FR1 10-02-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 11 FR1 10-03-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 2 FR1 10-02-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 2 FR1 10-03-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 4 FR1 10-02-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 4 FR1 10-03-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 6 FR1 10-02-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 6 FR1 10-03-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 8 FR1 10-02-25.mkv
-  : crop: 0, 1280, 0, 720
-  ? /mnt/c/Users/jiewang/OneDrive - University of Texas Medical 
-    Branch/code/rat_pose/projects/rat/videos/RAT 8 FR1 10-03-25.mkv
-  : crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\2025-03-18 12-58-10.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\2025-03-18 12-58-46.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\2025-03-18 14-08-10.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\Camera4_stitched.mp4:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 11 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 11 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 2 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 2 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 4 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 4 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 6 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 6 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 8 FR1 10-02-25.mkv:
+    crop: 0, 1280, 0, 720
+  C:\Users\jiewang\OneDrive - University of Texas Medical Branch\code\rat_pose\projects\rat\videos\RAT 8 FR1 10-03-25.mkv:
+    crop: 0, 1280, 0, 720
 bodyparts:
 - head
 - nose
@@ -79,6 +64,9 @@ bodyparts:
 - R_knee
 - L_knee
 - L_frontpaw
+
+
+# Fraction of video to start/stop when extracting frames for labeling/refinement
 
 
 # Fraction of video to start/stop when extracting frames for labeling/refinement
